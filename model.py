@@ -300,16 +300,50 @@ class cyclegan():
             print("start saving")
             save_images(fake_img, [1, 1], image_path)
 
+    def export(self, model_dir):
+        if not self.inited:
+            init_op = tf.global_variables_initializer()
+            self.sess.run(init_op)
+            self.inited = True
+
+        if not self.loaded:
+            if self.load():
+                print(" check point loaded.")
+
+        out_var, in_var = (self.testA, self.test_B)
+        tensor_in = tf.compat.v1.saved_model.build_tensor_info(in_var)
+        tensor_out = tf.compat.v1.saved_model.build_tensor_info(out_var)
+        inputs = {in_var.name.split(':')[0].lower(): tensor_in}
+        outputs = {out_var.name.split(':')[0].lower(): tensor_out}
+
+        prediction_signature = (
+            tf.saved_model.signature_def_utils.build_signature_def(
+                inputs=inputs,
+                outputs=outputs,
+                method_name=tf.saved_model.signature_constants.PREDICT_METHOD_NAME
+            )
+        )
+        builder = tf.saved_model.builder.SavedModelBuilder(model_dir)
+        builder.add_meta_graph_and_variables(
+            self.sess, [tf.saved_model.tag_constants.SERVING],
+            signature_def_map={
+                tf.saved_model.signature_constants.DEFAULT_SERVING_SIGNATURE_DEF_KEY:
+                    prediction_signature
+            })
+        builder.save()
+        print('Model saved to %s' % model_dir)
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        'phase', choices=['train', 'test', 'eval'], default='eval'
+        'phase', choices=['train', 'test', 'eval', 'export'], default='eval'
     )
     parser.add_argument('--image')
     parser.add_argument('--output-dir')
     parser.add_argument('--checkpoint-dir', default='./checkpoint/face_256')
     parser.add_argument('--dataset-dir', default='./datasets/face')
+    parser.add_argument('--export-path')
 
     return parser.parse_args()
 
@@ -341,6 +375,10 @@ def main():
         elif phase == "test":
             print("test")
             model.test()
+        elif phase == 'export':
+            if not args.export_path:
+                raise RuntimeError('Provide --export-path to select model directory')
+            model.export(args.export_path)
         else:
             if not args.image or not args.output_dir:
                 raise RuntimeError("Provide --image and output dir for mode eval")
