@@ -126,7 +126,8 @@ class cyclegan():
         t_vars = tf.trainable_variables()
         self.d_vars = [var for var in t_vars if 'discriminator' in var.name]
         self.g_vars = [var for var in t_vars if 'generator' in var.name]
-        for var in t_vars: tf.logging.info(var.name)
+        for var in t_vars:
+            tf.logging.info(var.name)
 
     def train(self):
         """Train cyclegan"""
@@ -157,7 +158,7 @@ class cyclegan():
         for epoch in range(self.epoch):
             dataA = glob('{}/*.*'.format(self.dataset_dir + '/trainA'))
             dataB = glob('{}/*.*'.format(self.dataset_dir + '/trainB'))
-            tf.logging.info("num of dataA : ", dataA.__len__())
+            tf.logging.info("num of dataA : %s" % dataA.__len__())
             np.random.shuffle(dataA)
             np.random.shuffle(dataB)
             batch_idxs = min(min(len(dataA), len(dataB)), self.train_size) // self.batch_size
@@ -239,7 +240,7 @@ class cyclegan():
             self.saver.restore(self.sess, os.path.join(self.checkpoint_dir, ckpt_name))
             index = ckpt_name.find("-")
             num_of_train = ckpt_name[index + 1:]
-            tf.logging.info(" checkpoint step : ", num_of_train)
+            tf.logging.info(" checkpoint step : %s" % num_of_train)
             self.loaded = True
             return True, num_of_train
         else:
@@ -270,11 +271,13 @@ class cyclegan():
             out_var, in_var = (self.testA, self.test_B)
 
         for sample_file in sample_files:
-            tf.logging.info('Processing image: ' + sample_file)
+            tf.logging.info('Processing image: %s' % sample_file)
             sample_image = [module.load_test_data(sample_file, self.fine_size)]
             sample_image = np.array(sample_image).astype(np.float32)
-            image_path = os.path.join(self.test_dir,
-                                      '{0}_{1}'.format(self.which_direction, os.path.basename(sample_file)))
+            image_path = os.path.join(
+                self.test_dir,
+                '{0}_{1}'.format(self.which_direction, os.path.basename(sample_file))
+            )
             fake_img = self.sess.run(out_var, feed_dict={in_var: sample_image})
             tf.logging.info("start saving")
             module.save_images(fake_img, [1, 1], image_path)
@@ -292,7 +295,7 @@ class cyclegan():
         out_var, in_var = (self.testA, self.test_B)
 
         for sample_file in image_files:
-            tf.logging.info('Processing image: ' + sample_file)
+            tf.logging.info('Processing image: %s' % sample_file)
             sample_image = [module.load_test_data(sample_file, self.fine_size)]
             sample_image = np.array(sample_image).astype(np.float32)
             image_path = os.path.join(
