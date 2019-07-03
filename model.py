@@ -4,8 +4,10 @@ import os
 import time
 from glob import glob
 from collections import namedtuple
+import numpy as np
+import tensorflow as tf
 
-from module import *
+import module
 
 
 class cyclegan():
@@ -37,11 +39,11 @@ class cyclegan():
         self.test_dir = test_dir
 
         # G D
-        self.discriminator = discriminator
-        self.generator = generator_resnet  # resnet generator
+        self.discriminator = module.discriminator
+        self.generator = module.generator_resnet  # resnet generator
 
         # loss_fn
-        self.original_GAN_loss = mae_criterion
+        self.original_GAN_loss = module.mae_criterion
 
         self.which_direction = which_direction
 
@@ -54,7 +56,7 @@ class cyclegan():
         self._build_model()
         # writer = tf.train.SummaryWriter("/tmp/test_logs", sess.graph)
         self.saver = tf.train.Saver()
-        self.pool = ImagePool(self.max_size)
+        self.pool = module.ImagePool(self.max_size)
 
     def _build_model(self):
         self.real_data = tf.placeholder(tf.float32,
@@ -75,8 +77,8 @@ class cyclegan():
 
         self.g_loss = self.original_GAN_loss(self.DA_fake, tf.ones_like(self.DA_fake)) \
                       + self.original_GAN_loss(self.DB_fake, tf.ones_like(self.DB_fake)) \
-                      + self.L1_lambda * abs_criterion(self.real_A, self.fake_A_) \
-                      + self.L1_lambda * abs_criterion(self.real_B, self.fake_B_)
+                      + self.L1_lambda * module.abs_criterion(self.real_A, self.fake_A_) \
+                      + self.L1_lambda * module.abs_criterion(self.real_B, self.fake_B_)
 
         """    loss   
         #########################################################
@@ -124,7 +126,7 @@ class cyclegan():
         t_vars = tf.trainable_variables()
         self.d_vars = [var for var in t_vars if 'discriminator' in var.name]
         self.g_vars = [var for var in t_vars if 'generator' in var.name]
-        for var in t_vars: print(var.name)
+        for var in t_vars: tf.logging.info(var.name)
 
     def train(self):
         """Train cyclegan"""
@@ -148,14 +150,14 @@ class cyclegan():
         start_time = time.time()
 
         if self.continue_train:
-            suc_or_fal, num_of_train = self.load()
-            if suc_or_fal:
-                counter = int(num_of_train.split('-')[1])
+            success, num_of_train = self.load()
+            if success:
+                counter = int(num_of_train)
 
         for epoch in range(self.epoch):
             dataA = glob('{}/*.*'.format(self.dataset_dir + '/trainA'))
             dataB = glob('{}/*.*'.format(self.dataset_dir + '/trainB'))
-            print("num of dataA : ", dataA.__len__())
+            tf.logging.info("num of dataA : ", dataA.__len__())
             np.random.shuffle(dataA)
             np.random.shuffle(dataB)
             batch_idxs = min(min(len(dataA), len(dataB)), self.train_size) // self.batch_size
@@ -165,7 +167,7 @@ class cyclegan():
             for idx in range(0, batch_idxs):
                 batch_files = list(zip(dataA[idx * self.batch_size:(idx + 1) * self.batch_size],
                                        dataB[idx * self.batch_size:(idx + 1) * self.batch_size]))
-                batch_images = [load_train_data(batch_file, self.load_size, self.fine_size) for batch_file in
+                batch_images = [module.load_train_data(batch_file, self.load_size, self.fine_size) for batch_file in
                                 batch_files]
                 batch_images = np.array(batch_images).astype(np.float32)
 
@@ -188,12 +190,12 @@ class cyclegan():
                 # self.writer.add_summary(summary_str, counter)
 
                 counter += 1
-                print(("Epoch: [%2d] [%4d/%4d] time: %4.4f" % (
+                tf.logging.info(("Epoch: [%2d] [%4d/%4d] time: %4.4f" % (
                     epoch, idx, batch_idxs, time.time() - start_time)))
 
                 if np.mod(counter, self.save_freq) == 2:
                     self.save(counter)
-                    print("ckpt saved")
+                    tf.logging.info("ckpt saved")
 
     def save(self, step):
 
@@ -222,11 +224,11 @@ class cyclegan():
             created = drive_service.files().create(body=file_metadata,
                                                    media_body=media,
                                                    fields='id').execute()
-            print('File ID: {}'.format(created.get('id')))
+            tf.logging.info('File ID: {}'.format(created.get('id')))
             """
 
     def load(self):
-        print(" [*] Reading checkpoint...")
+        tf.logging.info(" [*] Reading checkpoint...")
 
         # model_dir = "%s_%s" % (self.dataset_dir, self.image_size)
         # checkpoint_dir = os.path.join(checkpoint_dir, model_dir)
@@ -237,11 +239,11 @@ class cyclegan():
             self.saver.restore(self.sess, os.path.join(self.checkpoint_dir, ckpt_name))
             index = ckpt_name.find("-")
             num_of_train = ckpt_name[index + 1:]
-            print(" checkpoint step : ", num_of_train)
+            tf.logging.info(" checkpoint step : ", num_of_train)
             self.loaded = True
             return True, num_of_train
         else:
-            print("check point load failed.")
+            tf.logging.info("check point load failed.")
             return False, 1
 
     def test(self):
@@ -250,17 +252,17 @@ class cyclegan():
         self.sess.run(init_op)
         if self.which_direction == 'AtoB':
             sample_files = glob('{}/*.*'.format(self.dataset_dir + '/testA'))
-            print("dataset list loaded.")
+            tf.logging.info("dataset list loaded.")
         elif self.which_direction == 'BtoA':
             sample_files = glob('{}/*.*'.format(self.dataset_dir + '/testB'))
-            print("dataset list loaded.")
+            tf.logging.info("dataset list loaded.")
         else:
             raise Exception('AtoB BtoA')
 
         if self.load():
-            print(" check point loaded")
+            tf.logging.info(" check point loaded")
         else:
-            print(" check point load failed")
+            tf.logging.info(" check point load failed")
 
         if self.which_direction == 'AtoB':
             out_var, in_var = (self.testB, self.test_A)
@@ -268,14 +270,14 @@ class cyclegan():
             out_var, in_var = (self.testA, self.test_B)
 
         for sample_file in sample_files:
-            print('Processing image: ' + sample_file)
-            sample_image = [load_test_data(sample_file, self.fine_size)]
+            tf.logging.info('Processing image: ' + sample_file)
+            sample_image = [module.load_test_data(sample_file, self.fine_size)]
             sample_image = np.array(sample_image).astype(np.float32)
             image_path = os.path.join(self.test_dir,
                                       '{0}_{1}'.format(self.which_direction, os.path.basename(sample_file)))
             fake_img = self.sess.run(out_var, feed_dict={in_var: sample_image})
-            print("start saving")
-            save_images(fake_img, [1, 1], image_path)
+            tf.logging.info("start saving")
+            module.save_images(fake_img, [1, 1], image_path)
 
     def deage(self, image_files, output_dir):
         if not self.inited:
@@ -285,20 +287,20 @@ class cyclegan():
 
         if not self.loaded:
             if self.load():
-                print(" check point loaded.")
+                tf.logging.info(" check point loaded.")
 
         out_var, in_var = (self.testA, self.test_B)
 
         for sample_file in image_files:
-            print('Processing image: ' + sample_file)
-            sample_image = [load_test_data(sample_file, self.fine_size)]
+            tf.logging.info('Processing image: ' + sample_file)
+            sample_image = [module.load_test_data(sample_file, self.fine_size)]
             sample_image = np.array(sample_image).astype(np.float32)
             image_path = os.path.join(
                 output_dir, os.path.basename(sample_file),
             )
             fake_img = self.sess.run(out_var, feed_dict={in_var: sample_image})
-            print("start saving")
-            save_images(fake_img, [1, 1], image_path)
+            tf.logging.info("start saving")
+            module.save_images(fake_img, [1, 1], image_path)
 
     def export(self, model_dir):
         if not self.inited:
@@ -309,7 +311,7 @@ class cyclegan():
         if not self.loaded:
             loaded, _ = self.load()
             if loaded:
-                print(" check point loaded.")
+                tf.logging.info(" check point loaded.")
             else:
                 raise RuntimeError("Checkpoint cannot be loaded.")
 
@@ -334,7 +336,7 @@ class cyclegan():
                     prediction_signature
             })
         builder.save()
-        print('Model saved to %s' % model_dir)
+        tf.logging.info('Model saved to %s' % model_dir)
 
 
 def parse_args():
@@ -352,6 +354,7 @@ def parse_args():
 
 
 def main():
+    tf.logging.set_verbosity(tf.logging.INFO)
     args = parse_args()
     checkpoint_dir = args.checkpoint_dir  #
     test_dir = './test'  #
@@ -373,10 +376,10 @@ def main():
             dataset_dir=dataset_dir, which_direction=which_direction
         )
         if phase == 'train':
-            print("train")
+            tf.logging.info("train")
             model.train()
         elif phase == "test":
-            print("test")
+            tf.logging.info("test")
             model.test()
         elif phase == 'export':
             if not args.export_path:
