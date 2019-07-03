@@ -307,8 +307,11 @@ class cyclegan():
             self.inited = True
 
         if not self.loaded:
-            if self.load():
+            loaded, _ = self.load()
+            if loaded:
                 print(" check point loaded.")
+            else:
+                raise RuntimeError("Checkpoint cannot be loaded.")
 
         out_var, in_var = (self.testA, self.test_B)
         tensor_in = tf.compat.v1.saved_model.build_tensor_info(in_var)
