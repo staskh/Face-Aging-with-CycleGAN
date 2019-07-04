@@ -58,14 +58,13 @@ def process(inputs, ctx):
 
     enable_color_transfer = get_param(inputs, 'color_transfer')
     alpha = get_param(inputs, 'alpha')
-    print(enable_color_transfer)
-    print(alpha)
 
     face_driver = ctx.drivers[0]
     cyclegan_driver = ctx.drivers[1]
     input_name = list(cyclegan_driver.inputs.keys())[0]
 
-    image, is_video = helpers.load_image(inputs, 'input')
+    original, is_video = helpers.load_image(inputs, 'input')
+    image = original.copy()
 
     boxes = get_boxes(face_driver, image)
     for box in boxes:
@@ -88,6 +87,9 @@ def process(inputs, ctx):
         image = cv2.seamlessClone(output, image, np.ones_like(output) * alpha, center, cv2.NORMAL_CLONE)
 
         # image[box[1]:box[3], box[0]:box[2]] = (output / 2 + img / 2).astype(np.uint8)
+
+    # merge
+    image = np.hstack((original, image))
 
     if not is_video:
         image = image[:, :, ::-1]
