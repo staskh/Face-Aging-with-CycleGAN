@@ -89,7 +89,7 @@ def process(inputs, ctx):
         # image[box[1]:box[3], box[0]:box[2]] = (output / 2 + img / 2).astype(np.uint8)
 
     # merge
-    image = np.hstack((original, image))
+    image = np.vstack((original, image))
 
     if not is_video:
         image = image[:, :, ::-1]
