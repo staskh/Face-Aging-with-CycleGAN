@@ -42,11 +42,11 @@ def get_param(inputs, key):
         return PARAMS.get(key)
 
     if hasattr(value, 'shape'):
-        if len(value.shape) == 0:
-            value = value.tolist()
-
         if len(value.shape) == 1:
             value = value[0]
+
+        if len(value.shape) == 0:
+            value = value.tolist()
 
     if isinstance(value, bytes):
         value = value.decode()
