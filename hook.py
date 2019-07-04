@@ -82,7 +82,7 @@ def process(inputs, ctx):
         output = cv2.resize(np.array(output), (box[2] - box[0], box[3] - box[1]), interpolation=cv2.INTER_AREA)
 
         if enable_color_transfer:
-            output = color_transfer.color_transfer(img, output, clip=True, preserve_paper=True)
+            output = color_transfer.color_transfer(img, output, clip=True, preserve_paper=False)
 
         center = (box[0] + output.shape[1] // 2, box[1] + output.shape[0] // 2)
         alpha = np.clip(alpha, 1, 255)
