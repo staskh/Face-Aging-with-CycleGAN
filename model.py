@@ -115,10 +115,10 @@ class cyclegan():
 
         """ test """
         self.test_A = tf.placeholder(tf.float32,
-                                     [None, self.image_size, self.image_size,
+                                     [None, None, None,
                                       self.input_c_dim], name='test_A')
         self.test_B = tf.placeholder(tf.float32,
-                                     [None, self.image_size, self.image_size,
+                                     [None, None, None,
                                       self.output_c_dim], name='test_B')
         self.testB = self.generator(self.test_A, self.options, True, name="generatorA2B")
         self.testA = self.generator(self.test_B, self.options, True, name="generatorB2A")

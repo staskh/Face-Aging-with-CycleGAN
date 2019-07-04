@@ -118,7 +118,7 @@ def inverse_transform(images):
 
 
 def prepare_image(img):
-    img = cv2.resize(img, (256, 256), interpolation=cv2.INTER_AREA)
+    img = cv2.resize(img, (512, 512), interpolation=cv2.INTER_AREA)
     return img / 127.5 - 1.
 
 
