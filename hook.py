@@ -40,11 +40,13 @@ def get_param(inputs, key):
     value = inputs.get(key)
     if value is None:
         return PARAMS.get(key)
-    if len(value.shape) == 0:
-        value = value.tolist()
 
-    if len(value.shape) == 1:
-        value = value[0]
+    if hasattr(value, 'shape'):
+        if len(value.shape) == 0:
+            value = value.tolist()
+
+        if len(value.shape) == 1:
+            value = value[0]
 
     if isinstance(value, bytes):
         value = value.decode()
