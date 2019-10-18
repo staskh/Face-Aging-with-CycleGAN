@@ -1,4 +1,5 @@
 import logging
+import math
 import time
 from ml_serving.drivers import driver
 
@@ -36,14 +37,17 @@ class TFOpenCVFaces:
         blob = cv2.dnn.blobFromImage(frame[:, :, ::-1], 1.0, (300, 300), [104, 117, 123], False, False)
         blob = np.transpose(blob, (0, 2, 3, 1))
         self.inputs['data:0'] = blob
+        st1 = time.time()
         result = self.serving.predict(self.inputs)
+        #LOG.info('BoxPredict time {}ms'.format(int((time.time()-st1)*1000)))
         probs = result.get('mbox_conf_flatten:0')
         boxes = result.get('mbox_loc:0')
-
+        st1 = time.time()
         self.net.setInput(boxes, name='mbox_loc')
         self.net.setInput(probs, name='mbox_conf_flatten')
         self.net.setInput(self.prior, name='mbox_priorbox')
         detections = self.net.forward()
+        #LOG.info('BoxDetect time {}ms'.format(int((time.time() - st1) * 1000)))
         bboxes = []
         for i in range(detections.shape[2]):
             confidence = detections[0, 0, i, 2]
@@ -56,11 +60,52 @@ class TFOpenCVFaces:
                     x2 = x1
                 if y1 > y2:
                     y2 = y1
-                bboxes.append((np.array([x1, y1, x2, y2], np.int32), confidence))
+                bboxes.append(np.array([x1, y1, x2, y2], np.int32))
         return bboxes
 
     def stop(self, ctx):
         del self.serving
+
+
+class OpenVinoFaces:
+    def __init__(self, model_path):
+        self._model_path = model_path
+        drv = driver.load_driver('openvino')
+        self.serving = drv()
+        self.serving.load_model(self._model_path)
+        self.input_name, self.input_shape = list(self.serving.inputs.items())[0]
+        self.output_name = list(self.serving.outputs)[0]
+        self.threshold = 0.5
+
+    def bboxes(self, frame):
+        inference_frame = cv2.resize(frame, tuple(self.input_shape[:-3:-1]), interpolation=cv2.INTER_LINEAR)
+        inference_frame = np.transpose(inference_frame, [2, 0, 1]).reshape(self.input_shape)
+        outputs = self.serving.predict({self.input_name: inference_frame})
+        output = outputs[self.output_name]
+        output = output.reshape(-1, 7)
+        bboxes_raw = output[output[:, 2] > self.threshold]
+        # Extract 5 values
+        boxes = bboxes_raw[:, 3:7]
+        confidence = np.expand_dims(bboxes_raw[:, 2], axis=0).transpose()
+        boxes = np.concatenate((boxes, confidence), axis=1)
+        # Assign confidence to 4th
+        # boxes[:, 4] = bboxes_raw[:, 2]
+        xmin = boxes[:, 0] * frame.shape[1]
+        xmax = boxes[:, 2] * frame.shape[1]
+        ymin = boxes[:, 1] * frame.shape[0]
+        ymax = boxes[:, 3] * frame.shape[0]
+        xmin[xmin < 0] = 0
+        xmax[xmax > frame.shape[1]] = frame.shape[1]
+        ymin[ymin < 0] = 0
+        ymax[ymax > frame.shape[0]] = frame.shape[0]
+        boxes[:, 0] = xmin
+        boxes[:, 2] = xmax
+        boxes[:, 1] = ymin
+        boxes[:, 3] = ymax
+        return boxes
+
+    def stop(self, ctx):
+        pass
 
 
 class Pipe:
@@ -72,10 +117,30 @@ class Pipe:
         self._face_detection_type = params.get('face_detection_type', None)
         if self._face_detection_type == 'tf-opencv':
             self.face_detector = TFOpenCVFaces(self._face_detection_path)
+        else:
+            self.face_detector = OpenVinoFaces(self._face_detection_path)
         self._output_view = params.get('output_view', 'split_horizontal')
         self._transfer_mode = params.get('transfer_mode', 'box_margin')
         self._style_driver = ctx.drivers[0]
         self._style_input_name = list(self._style_driver.inputs.keys())[0]
+        self._mask_orig = np.zeros((self._style_size, self._style_size, 3), np.float32)
+        k = 10
+        for x in range(self._style_size):
+            for y in range(self._style_size):
+                xv = x - self._style_size/2
+                yv = y - self._style_size/2
+                r = math.sqrt(xv * xv + yv * yv)
+                if r > (self._style_size/2-5):
+                    self._mask_orig[y, x, :] = min((r - self._style_size/2+5) / 5, 1)
+        # for i in range(k + 1):
+        #    self._mask_orig[i, :, :] = (k - i) / k
+        # for i in range(k + 1):
+        #    self._mask_orig[:, i, :] = (k - i) / k
+        # for i in range(k + 1):
+        #    self._mask_orig[self._mask_orig.shape[0] - 1 - i, :, :] = (k - i) / k
+        # for i in range(k + 1):
+        #    self._mask_orig[:, self._mask_orig.shape[1] - 1 - i, :] = (k - i) / k
+        self._mask_face = 1 - self._mask_orig
 
     def get_param(self, inputs, key, def_val=None):
         value = inputs.get(key)
@@ -94,29 +159,34 @@ class Pipe:
 
     def process(self, inputs, ctx):
         alpha = int(self.get_param(inputs, 'alpha', self._alpha))
-        style_size = int(self.get_param(inputs, 'style_size', self._style_size))
+        style_size = self._style_size
         original, is_video = helpers.load_image(inputs, 'input')
         image = original.copy()
+        cv2.imwrite('test/frame.png', image[:, :, ::-1])
         st1 = time.time()
         boxes = self.face_detector.bboxes(image)
-        LOG.info('BoxTime: {}ms'.format(int((time.time() - st1) * 1000)))
-        for box, confidence in boxes:
+        #LOG.info('BoxTime: {}ms'.format(int((time.time() - st1) * 1000)))
+        for box in boxes:
             box = box.astype(int)
-            img = image[box[1]:box[3], box[0]:box[2],:]
-            prepared = np.expand_dims(prepare_image(img, style_size), axis=0)
+            if box[3] - box[1] < 1 or box[2] - box[0] < 1:
+                continue
+            img = image[box[1]:box[3], box[0]:box[2], :]
             st1 = time.time()
-            outputs = self._style_driver.predict({self._style_input_name: prepared})
-            LOG.info('StyleTime: {}ms'.format(int((time.time() - st1) * 1000)))
+            inference_img = scale_to_inference_image(img, style_size)
+            outputs = self._style_driver.predict(
+                {self._style_input_name: np.expand_dims(norm_to_inference(inference_img), axis=0)})
+            #LOG.info('StyleTime: {}ms'.format(int((time.time() - st1) * 1000)))
             output = list(outputs.values())[0].squeeze()
             output = inverse_transform(output)
             output = scale(output)
             alpha = np.clip(alpha, 1, 255)
             if self.get_param(inputs, 'transfer_mode', self._transfer_mode) == 'color_transfer':
                 st1 = time.time()
-                output = color_tranfer(output, img)
-                output = cv2.resize(output, (box[2] - box[0], box[3] - box[1]), interpolation=cv2.INTER_AREA)
+                output = color_tranfer(output, inference_img)
+                output = (inference_img * self._mask_orig + output * self._mask_face).astype(np.uint8)
+                output = cv2.resize(output, (box[2] - box[0], box[3] - box[1]),interpolation=cv2.INTER_LINEAR)
                 image[box[1]:box[3], box[0]:box[2], :] = output
-                LOG.info('ColorTransfer: {}ms'.format(int((time.time() - st1) * 1000)))
+                #LOG.info('ColorTransfer: {}ms'.format(int((time.time() - st1) * 1000)))
             else:
                 output = cv2.resize(np.array(output), (box[2] - box[0], box[3] - box[1]), interpolation=cv2.INTER_AREA)
                 if self.get_param(inputs, 'transfer_mode', self._transfer_mode) == 'box_margin':
@@ -125,23 +195,21 @@ class Pipe:
                     ymin = max(0, box[1] - 50)
                     wup = box[1] - ymin
                     xmax = min(image.shape[1], box[2] + 50)
-                    # wright = xmax-box[2]
                     ymax = min(image.shape[0], box[3] + 50)
-                    # wdown = ymax-box[3]
                     out = image[ymin:ymax, xmin:xmax, :]
                     center = (wleft + output.shape[1] // 2, wup + output.shape[0] // 2)
                     st1 = time.time()
                     out = cv2.seamlessClone(output, out, np.ones_like(output) * alpha, center, cv2.NORMAL_CLONE)
-                    LOG.info('CloneTime Box: {}ms'.format(int((time.time() - st1) * 1000)))
+                    #LOG.info('CloneTime Box: {}ms'.format(int((time.time() - st1) * 1000)))
                     image[ymin:ymax, xmin:xmax, :] = out
                 else:
                     center = (box[0] + output.shape[1] // 2, box[1] + output.shape[0] // 2)
                     st1 = time.time()
                     image = cv2.seamlessClone(output, image, np.ones_like(output) * alpha, center, cv2.NORMAL_CLONE)
-                    LOG.info('CloneTime Full: {}ms'.format(int((time.time() - st1) * 1000)))
+                    #LOG.info('CloneTime Full: {}ms'.format(int((time.time() - st1) * 1000)))
             if len(box) > 0:
                 if srt_2_bool(self.get_param(inputs, "draw_box", self._draw_box)):
-                    LOG.info('DrawBox: {}'.format(srt_2_bool(self.get_param(inputs, "draw_box", self._draw_box))))
+                    #LOG.info('DrawBox: {}'.format(srt_2_bool(self.get_param(inputs, "draw_box", self._draw_box))))
                     image = cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2, 8)
                     break
         # merge
@@ -193,10 +261,12 @@ def inverse_transform(images):
     return (images + 1.) / 2.
 
 
-def prepare_image(img, style_size=256):
-    img = cv2.resize(img, (style_size, style_size), interpolation=cv2.INTER_AREA)
-    return img / 127.5 - 1.
+def scale_to_inference_image(img, style_size=256):
+    return cv2.resize(img, (style_size, style_size),interpolation=cv2.INTER_LINEAR)
 
+
+def norm_to_inference(img):
+    return img / 127.5 - 1.
 
 
 def srt_2_bool(v):
@@ -212,8 +282,8 @@ def color_tranfer(s, t):
     t = cv2.cvtColor(t, cv2.COLOR_RGB2LAB)
     s_mean, s_std = get_mean_and_std(s)
     t_mean, t_std = get_mean_and_std(t)
-    s = ((s-s_mean)*(t_std/s_std))+t_mean
-    s = np.clip(s,0,255).astype(np.uint8)
+    s = ((s - s_mean) * (t_std / s_std)) + t_mean
+    s = np.clip(s, 0, 255).astype(np.uint8)
     return cv2.cvtColor(s, cv2.COLOR_LAB2RGB)
 
 
