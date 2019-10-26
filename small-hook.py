@@ -15,14 +15,8 @@ class TFOpenCVFaces:
         self._model_path = model_path
         drv = driver.load_driver('tensorflow')
         self.serving = drv()
-        constants0 = {'data_bn/beta:0': 3, 'conv1_bn_h/beta:0': 32, 'layer_128_1_bn1_h/beta:0': 32,
-                      'layer_256_1_bn1/beta:0': 128, 'layer_512_1_bn1/beta:0': 256, 'last_bn_h/beta:0': 256}
-        input_names = ['data:0']
-        self.inputs = {}
-        for k, v in constants0.items():
-            input_names.append(k)
-            self.inputs[k] = np.zeros((v), np.float32)
-        self.serving.load_model(self._model_path + '/opencv_face_detector_uint8.pb', inputs=','.join(input_names),
+        #opencv_face_detector_uint8_rt_fp16.p
+        self.serving.load_model(self._model_path + '/opencv_face_detector_uint8_rt_fp16.pb', inputs='data:0',
                                 outputs='mbox_loc:0,mbox_conf_flatten:0')
         configFile = self._model_path + "/detector.pbtxt"
         self.net = cv2.dnn.readNetFromTensorflow(None, configFile)
@@ -30,16 +24,15 @@ class TFOpenCVFaces:
         self.prior = np.fromfile(self._model_path + '/mbox_priorbox.np', np.float32)
         self.prior = np.reshape(self.prior, (1, 2, 35568))
         self.threshold = 0.5
+        ##Dry run
+        self.bboxes(np.zeros((300, 300, 3), np.uint8))
 
     def bboxes(self, frame):
         frameHeight = frame.shape[0]
         frameWidth = frame.shape[1]
         blob = cv2.dnn.blobFromImage(frame[:, :, ::-1], 1.0, (300, 300), [104, 117, 123], False, False)
         blob = np.transpose(blob, (0, 2, 3, 1))
-        self.inputs['data:0'] = blob
-        st1 = time.time()
-        result = self.serving.predict(self.inputs)
-        #LOG.info('BoxPredict time {}ms'.format(int((time.time()-st1)*1000)))
+        result = self.serving.predict({'data:0': blob})
         probs = result.get('mbox_conf_flatten:0')
         boxes = result.get('mbox_loc:0')
         st1 = time.time()
@@ -47,7 +40,7 @@ class TFOpenCVFaces:
         self.net.setInput(probs, name='mbox_conf_flatten')
         self.net.setInput(self.prior, name='mbox_priorbox')
         detections = self.net.forward()
-        #LOG.info('BoxDetect time {}ms'.format(int((time.time() - st1) * 1000)))
+        # LOG.info('BoxDetect time {}ms'.format(int((time.time() - st1) * 1000)))
         bboxes = []
         for i in range(detections.shape[2]):
             confidence = detections[0, 0, i, 2]
@@ -64,7 +57,7 @@ class TFOpenCVFaces:
         return bboxes
 
     def stop(self, ctx):
-        del self.serving
+        self.serving.release()
 
 
 class OpenVinoFaces:
@@ -98,10 +91,10 @@ class OpenVinoFaces:
         xmax[xmax > frame.shape[1]] = frame.shape[1]
         ymin[ymin < 0] = 0
         ymax[ymax > frame.shape[0]] = frame.shape[0]
-        boxes[:, 0] = xmin
-        boxes[:, 2] = xmax
-        boxes[:, 1] = ymin
-        boxes[:, 3] = ymax
+        boxes = []
+        for i in range(len(xmin)):
+            boxes.append(np.array([int(xmin[i]), int(ymin[i]), int(xmax[i]), int(ymax[i])], np.int32))
+
         return boxes
 
     def stop(self, ctx):
@@ -109,38 +102,38 @@ class OpenVinoFaces:
 
 
 class Pipe:
-    def __init__(self, ctx, **params):
+    def __init__(self, ctx, face_detector, **params):
         self._alpha = int(params.get('alpha', 255))
         self._draw_box = srt_2_bool(params.get('draw_box', False))
-        self._face_detection_path = params.get('face_detection_path', None)
+        self._open_vino_model_path = params.get('openvino_model_path', None)
+        self._tf_opencv_model_path = params.get('tf_opencv_model_path', None)
         self._style_size = int(params.get('style_size', 256))
         self._face_detection_type = params.get('face_detection_type', None)
-        if self._face_detection_type == 'tf-opencv':
-            self.face_detector = TFOpenCVFaces(self._face_detection_path)
+        if face_detector is not None:
+            self.face_detector = face_detector
+        elif self._face_detection_type == 'tf-opencv':
+            self.face_detector = TFOpenCVFaces(self._tf_opencv_model_path)
         else:
-            self.face_detector = OpenVinoFaces(self._face_detection_path)
+            self.face_detector = OpenVinoFaces(self._open_vino_model_path)
         self._output_view = params.get('output_view', 'split_horizontal')
         self._transfer_mode = params.get('transfer_mode', 'box_margin')
+        self._color_correction = srt_2_bool(params.get('color_correction', 'True'))
         self._style_driver = ctx.drivers[0]
         self._style_input_name = list(self._style_driver.inputs.keys())[0]
         self._mask_orig = np.zeros((self._style_size, self._style_size, 3), np.float32)
-        k = 10
         for x in range(self._style_size):
             for y in range(self._style_size):
-                xv = x - self._style_size/2
-                yv = y - self._style_size/2
+                xv = x - self._style_size / 2
+                yv = y - self._style_size / 2
                 r = math.sqrt(xv * xv + yv * yv)
-                if r > (self._style_size/2-5):
-                    self._mask_orig[y, x, :] = min((r - self._style_size/2+5) / 5, 1)
-        # for i in range(k + 1):
-        #    self._mask_orig[i, :, :] = (k - i) / k
-        # for i in range(k + 1):
-        #    self._mask_orig[:, i, :] = (k - i) / k
-        # for i in range(k + 1):
-        #    self._mask_orig[self._mask_orig.shape[0] - 1 - i, :, :] = (k - i) / k
-        # for i in range(k + 1):
-        #    self._mask_orig[:, self._mask_orig.shape[1] - 1 - i, :] = (k - i) / k
+                if r > (self._style_size / 2 - 5):
+                    self._mask_orig[y, x, :] = min((r - self._style_size / 2 + 5) / 5, 1)
         self._mask_face = 1 - self._mask_orig
+        self._style_driver.predict(
+            {self._style_input_name: np.zeros((1, self._style_size, self._style_size, 3), np.float32)})
+        self._time = -1
+        self._cx = -1
+        self._cy = -1
 
     def get_param(self, inputs, key, def_val=None):
         value = inputs.get(key)
@@ -161,32 +154,72 @@ class Pipe:
         alpha = int(self.get_param(inputs, 'alpha', self._alpha))
         style_size = self._style_size
         original, is_video = helpers.load_image(inputs, 'input')
-        image = original.copy()
-        cv2.imwrite('test/frame.png', image[:, :, ::-1])
-        st1 = time.time()
-        boxes = self.face_detector.bboxes(image)
-        #LOG.info('BoxTime: {}ms'.format(int((time.time() - st1) * 1000)))
-        for box in boxes:
-            box = box.astype(int)
+        output_view = self.get_param(inputs, 'output_view', self._output_view)
+        if output_view == 'horizontal' or output_view == 'h':
+            x0 = int(original.shape[1] / 4)
+            x1 = int(original.shape[1] / 2) + x0
+            original = original[:, x0:x1, :]
+        boxes = self.face_detector.bboxes(original)
+        boxes.sort(key=lambda box: abs((box[3] - box[1]) * (box[2] - box[0])), reverse=True)
+        _time = time.time()
+        oh = original.shape[1]
+        ow = original.shape[0]
+        cy = int(oh / 2)
+        cx = int(ow / 2)
+        if self._time < 0:
+            self._time = _time
+            self._cy = int(oh / 2)
+            self._cx = int(ow / 2)
+        delta_t = _time - self._time
+        self._time = _time
+        box = None
+        if len(boxes) > 0:
+            box = boxes[0].astype(int)
             if box[3] - box[1] < 1 or box[2] - box[0] < 1:
-                continue
+                box = None
+                self._cy = cy
+                self._cx = cx
+                #original = cv2.resize(original, (cx, cy))
+            elif _time<0:
+                by = int((box[3] + box[1]) / 2)
+                bx = int((box[2] + box[0]) / 2)
+                self._cy += int((by - self._cy) / 50 * delta_t)
+                self._cx += int((bx - self._cx) / 50 * delta_t)
+                #logging.info('{}-{}/{}-{}'.format())
+                y0 = 0
+                y1 = original.shape[0]
+                x0 = 0
+                x1 = original.shape[1]
+                if self._cy < cy:
+                    y1 -= (cy - self._cy)
+                else:
+                    y0 += (self._cy - cy)
+                if self._cx < cx:
+                    x1 -= (cx - self._cx)
+                else:
+                    x0 += (self._cx - cx)
+                original = original[y0:y1, x0:x1, :]
+                original = cv2.resize(original, (ow, oh))
+        else:
+            self._cy = cy
+            self._cx = cx
+            #original = cv2.resize(original, (cx, cy))
+        image = original.copy()
+        if box is not None:
             img = image[box[1]:box[3], box[0]:box[2], :]
-            st1 = time.time()
             inference_img = scale_to_inference_image(img, style_size)
             outputs = self._style_driver.predict(
                 {self._style_input_name: np.expand_dims(norm_to_inference(inference_img), axis=0)})
-            #LOG.info('StyleTime: {}ms'.format(int((time.time() - st1) * 1000)))
             output = list(outputs.values())[0].squeeze()
             output = inverse_transform(output)
             output = scale(output)
             alpha = np.clip(alpha, 1, 255)
-            if self.get_param(inputs, 'transfer_mode', self._transfer_mode) == 'color_transfer':
-                st1 = time.time()
+            if srt_2_bool(self.get_param(inputs, 'color_correction', self._color_correction)):
                 output = color_tranfer(output, inference_img)
+            if self.get_param(inputs, 'transfer_mode', self._transfer_mode) == 'direct':
                 output = (inference_img * self._mask_orig + output * self._mask_face).astype(np.uint8)
-                output = cv2.resize(output, (box[2] - box[0], box[3] - box[1]),interpolation=cv2.INTER_LINEAR)
+                output = cv2.resize(output, (box[2] - box[0], box[3] - box[1]), interpolation=cv2.INTER_LINEAR)
                 image[box[1]:box[3], box[0]:box[2], :] = output
-                #LOG.info('ColorTransfer: {}ms'.format(int((time.time() - st1) * 1000)))
             else:
                 output = cv2.resize(np.array(output), (box[2] - box[0], box[3] - box[1]), interpolation=cv2.INTER_AREA)
                 if self.get_param(inputs, 'transfer_mode', self._transfer_mode) == 'box_margin':
@@ -198,33 +231,33 @@ class Pipe:
                     ymax = min(image.shape[0], box[3] + 50)
                     out = image[ymin:ymax, xmin:xmax, :]
                     center = (wleft + output.shape[1] // 2, wup + output.shape[0] // 2)
-                    st1 = time.time()
                     out = cv2.seamlessClone(output, out, np.ones_like(output) * alpha, center, cv2.NORMAL_CLONE)
-                    #LOG.info('CloneTime Box: {}ms'.format(int((time.time() - st1) * 1000)))
                     image[ymin:ymax, xmin:xmax, :] = out
                 else:
                     center = (box[0] + output.shape[1] // 2, box[1] + output.shape[0] // 2)
-                    st1 = time.time()
-                    image = cv2.seamlessClone(output, image, np.ones_like(output) * alpha, center, cv2.NORMAL_CLONE)
-                    #LOG.info('CloneTime Full: {}ms'.format(int((time.time() - st1) * 1000)))
+                    if not (center[0] >= output.shape[1] or box[1] + output.shape[0] // 2 >= output.shape[0]):
+                        image = cv2.seamlessClone(output, image, np.ones_like(output) * alpha, center, cv2.NORMAL_CLONE)
             if len(box) > 0:
                 if srt_2_bool(self.get_param(inputs, "draw_box", self._draw_box)):
-                    #LOG.info('DrawBox: {}'.format(srt_2_bool(self.get_param(inputs, "draw_box", self._draw_box))))
                     image = cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2, 8)
-                    break
         # merge
         output_view = self.get_param(inputs, 'output_view', self._output_view)
-        if output_view == 'split_horizontal':
+        result = {}
+        if output_view == 'horizontal' or output_view == 'h':
             image = np.hstack((original, image))
-        elif output_view == 'split_vertical':
+        elif output_view == 'vertical' or output_view == 'v':
             image = np.vstack((original, image))
         if not is_video:
             image = image[:, :, ::-1]
             image_bytes = cv2.imencode('.jpg', image)[1].tostring()
         else:
             image_bytes = image
+            h = 480
+            w = int(480 * image.shape[1] / image.shape[0])
+            result['status'] = cv2.resize(image, (w, h))
 
-        return {'output': image_bytes}
+        result['output'] = image_bytes
+        return result
 
     def stop(self, ctx):
         self.face_detector.stop(ctx)
@@ -232,14 +265,16 @@ class Pipe:
 
 def init_hook(ctx, **params):
     LOG.info('Init params:')
-    return Pipe(ctx, **params)
+    return Pipe(ctx, None, **params)
 
 
 def update_hook(ctx, **kwargs):
+    prev_detector = None
     if ctx.global_ctx is not None:
         LOG.info('close existing pipe')
-        ctx.global_ctx.stop(ctx)
-    return Pipe(ctx, **kwargs)
+        # ctx.global_ctx.stop(ctx)
+        prev_detector = ctx.global_ctx.face_detector
+    return Pipe(ctx, prev_detector, **kwargs)
 
 
 def process(inputs, ctx):
@@ -262,7 +297,7 @@ def inverse_transform(images):
 
 
 def scale_to_inference_image(img, style_size=256):
-    return cv2.resize(img, (style_size, style_size),interpolation=cv2.INTER_LINEAR)
+    return cv2.resize(img, (style_size, style_size), interpolation=cv2.INTER_LINEAR)
 
 
 def norm_to_inference(img):
