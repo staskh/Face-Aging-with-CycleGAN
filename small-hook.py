@@ -16,7 +16,7 @@ class TFOpenCVFaces:
         drv = driver.load_driver('tensorflow')
         self.serving = drv()
         #opencv_face_detector_uint8_rt_fp16.p
-        self.serving.load_model(self._model_path + '/opencv_face_detector_uint8_rt_fp16.pb', inputs='data:0',
+        self.serving.load_model(self._model_path + '/opencv_face_detector_uint8.pb', inputs='data:0',
                                 outputs='mbox_loc:0,mbox_conf_flatten:0')
         configFile = self._model_path + "/detector.pbtxt"
         self.net = cv2.dnn.readNetFromTensorflow(None, configFile)
