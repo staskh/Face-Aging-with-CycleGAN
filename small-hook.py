@@ -243,7 +243,7 @@ class Pipe:
         # merge
         output_view = self.get_param(inputs, 'output_view', self._output_view)
         result = {}
-        if output_view == 'horizontal' or output_view == 'h':
+        if output_view == 'horizontal' or output_view == 'h' or output_view == 'fh':
             image = np.hstack((original, image))
         elif output_view == 'vertical' or output_view == 'v':
             image = np.vstack((original, image))
