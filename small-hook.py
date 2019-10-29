@@ -6,17 +6,21 @@ from ml_serving.drivers import driver
 import cv2
 from ml_serving.utils import helpers
 import numpy as np
+import os
 
 LOG = logging.getLogger(__name__)
 
 
 class TFOpenCVFaces:
-    def __init__(self, model_path):
+    def __init__(self, model_path, use_tensor_rt=False):
         self._model_path = model_path
         drv = driver.load_driver('tensorflow')
         self.serving = drv()
-        #opencv_face_detector_uint8_rt_fp16.p
-        self.serving.load_model(self._model_path + '/opencv_face_detector_uint8.pb', inputs='data:0',
+        _model = 'opencv_face_detector_uint8.pb'
+        if use_tensor_rt:
+            _model = 'opencv_face_detector_uint8_rt_fp16.pb'
+
+        self.serving.load_model(os.path.join(self._model_path, _model), inputs='data:0',
                                 outputs='mbox_loc:0,mbox_conf_flatten:0')
         configFile = self._model_path + "/detector.pbtxt"
         self.net = cv2.dnn.readNetFromTensorflow(None, configFile)
@@ -101,6 +105,65 @@ class OpenVinoFaces:
         pass
 
 
+class BGAug:
+    def __init__(self, sdd_model_path, background_model_path, back_ground_file='beach.jpg'):
+        ssd = driver.load_driver('tensorflow')
+        self.ssd = ssd()
+        self.ssd.load_model(sdd_model_path)
+        self.ssd_input_name, self.ssd_input_shape = list(self.ssd.inputs.items())[0]
+        background = driver.load_driver('tensorflow')
+        self.background = background()
+        self.background.load_model(background_model_path)
+        self.back_ground_file = back_ground_file
+        self.back_ground = None
+
+    def process(self, frame):
+        width = frame.shape[1]
+        height = frame.shape[0]
+        if self.back_ground is None:
+            self.back_ground = cv2.imread(self.back_ground_file)[:, :, ::-1]
+            self.back_ground = cv2.resize(self.back_ground, (width, height))
+        outputs = self.ssd.predict({self.ssd_input_name: np.expand_dims(cv2.resize(frame,(320,320)), axis=0)})
+        clazz = outputs['detection_classes'][0]
+        scores = outputs['detection_scores'][0]
+        boxes = outputs['detection_boxes'][0]
+        peoples = np.equal(clazz, 1)
+        boxes = boxes[peoples]
+        scores = scores[peoples]
+        boxes = boxes[scores > 0.5]
+        box = None
+        max_area = 0
+        for b in boxes:
+            a = (b[3] - b[1]) * (b[2] - b[0])
+            if a>max_area:
+                box = (b[0]*height,b[1]*width,b[2]*height,b[3]*width)
+                max_area = a
+        total_mask = np.zeros((height, width), np.float32)
+        if box is not None:
+            x1 = int(box[1])
+            y1 = int(box[0])
+            x2 = int(box[3])
+            y2 = int(box[2])
+            x1 = max(0, x1 - 10)
+            x2 = min(frame.shape[1], x2 + 10)
+            y1 = max(0, y1 - 10)
+            y2 = min(frame.shape[0], y2 + 10)
+            patch = frame[y1:y2, x1:x2, :]
+            ph = patch.shape[0]
+            pw = patch.shape[1]
+            patch = cv2.resize(patch, (160, 160))
+            patch = np.asarray(patch, np.float32) / 255.0
+            outputs = self.background.predict({'image': np.expand_dims(patch, axis=0)})
+            mask = outputs['output'][0]
+            mask = cv2.resize(mask, (pw, ph))
+            mask[mask > 0.5] = 1
+            mask[mask <= 0.5] = 0
+            total_mask[y1:y2, x1:x2] = mask
+        total_mask = np.expand_dims(total_mask, 2)
+        frame = frame * total_mask + self.back_ground * (1 - total_mask)
+        return frame.astype(np.uint8)
+
+
 class Pipe:
     def __init__(self, ctx, face_detector, **params):
         self._alpha = int(params.get('alpha', 255))
@@ -112,7 +175,8 @@ class Pipe:
         if face_detector is not None:
             self.face_detector = face_detector
         elif self._face_detection_type == 'tf-opencv':
-            self.face_detector = TFOpenCVFaces(self._tf_opencv_model_path)
+            face_detection_tensor_rt = srt_2_bool(params.get('face_detection_tensor_rt', False))
+            self.face_detector = TFOpenCVFaces(self._tf_opencv_model_path, use_tensor_rt=face_detection_tensor_rt)
         else:
             self.face_detector = OpenVinoFaces(self._open_vino_model_path)
         self._output_view = params.get('output_view', 'split_horizontal')
@@ -131,9 +195,12 @@ class Pipe:
         self._mask_face = 1 - self._mask_orig
         self._style_driver.predict(
             {self._style_input_name: np.zeros((1, self._style_size, self._style_size, 3), np.float32)})
-        self._time = -1
-        self._cx = -1
-        self._cy = -1
+
+        background_img = params.get('background', '')
+        self._background = None
+        if background_img is not None and len(background_img) > 0 and background_img != 'none':
+            self._background = BGAug(params.get('ssd_model_path', ''), params.get('background_model_path', ''),
+                                     background_img)
 
     def get_param(self, inputs, key, def_val=None):
         value = inputs.get(key)
@@ -161,49 +228,12 @@ class Pipe:
             original = original[:, x0:x1, :]
         boxes = self.face_detector.bboxes(original)
         boxes.sort(key=lambda box: abs((box[3] - box[1]) * (box[2] - box[0])), reverse=True)
-        _time = time.time()
-        oh = original.shape[1]
-        ow = original.shape[0]
-        cy = int(oh / 2)
-        cx = int(ow / 2)
-        if self._time < 0:
-            self._time = _time
-            self._cy = int(oh / 2)
-            self._cx = int(ow / 2)
-        delta_t = _time - self._time
-        self._time = _time
+
         box = None
         if len(boxes) > 0:
             box = boxes[0].astype(int)
             if box[3] - box[1] < 1 or box[2] - box[0] < 1:
                 box = None
-                self._cy = cy
-                self._cx = cx
-                #original = cv2.resize(original, (cx, cy))
-            elif _time<0:
-                by = int((box[3] + box[1]) / 2)
-                bx = int((box[2] + box[0]) / 2)
-                self._cy += int((by - self._cy) / 50 * delta_t)
-                self._cx += int((bx - self._cx) / 50 * delta_t)
-                #logging.info('{}-{}/{}-{}'.format())
-                y0 = 0
-                y1 = original.shape[0]
-                x0 = 0
-                x1 = original.shape[1]
-                if self._cy < cy:
-                    y1 -= (cy - self._cy)
-                else:
-                    y0 += (self._cy - cy)
-                if self._cx < cx:
-                    x1 -= (cx - self._cx)
-                else:
-                    x0 += (self._cx - cx)
-                original = original[y0:y1, x0:x1, :]
-                original = cv2.resize(original, (ow, oh))
-        else:
-            self._cy = cy
-            self._cx = cx
-            #original = cv2.resize(original, (cx, cy))
         image = original.copy()
         if box is not None:
             img = image[box[1]:box[3], box[0]:box[2], :]
@@ -241,6 +271,9 @@ class Pipe:
                 if srt_2_bool(self.get_param(inputs, "draw_box", self._draw_box)):
                     image = cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2, 8)
         # merge
+        if self._background is not None:
+            image = self._background.process(image)
+
         output_view = self.get_param(inputs, 'output_view', self._output_view)
         result = {}
         if output_view == 'horizontal' or output_view == 'h' or output_view == 'fh':
