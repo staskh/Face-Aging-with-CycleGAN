@@ -17,12 +17,13 @@ PARAMS = {
 }
 
 
-def init_hook(**params):
+def init_hook(ctx, **params):
     PARAMS.update(params)
     PARAMS['alpha'] = int(PARAMS['alpha'])
     PARAMS['color_transfer'] = str2bool(PARAMS['color_transfer'])
     LOG.info('Init params:')
-    LOG.info(json.dumps(PARAMS, indent=2))
+    new_params = {k: v for k, v in PARAMS.items() if k not in ctx.driver.kwargs_for_hook()}
+    LOG.info(json.dumps(new_params, indent=2))
 
 
 def str2bool(v: typing.Union[bool, str]):
