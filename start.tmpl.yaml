@@ -1,0 +1,65 @@
+project:
+  src:
+    type: "kibernetika-data"
+    workspace: "expo-recall"
+    version: "1.0.2"
+    name: "beauty-face"
+    auth_type: "ktoken"
+  start.sh.tmpl: |
+    {{`#!/usr/bin/env bash
+    kstreaming --driver tensorflow --model-path {{directory.beauty_face}} \
+      --hooks small-hook.py \
+      --input-name input \
+      --output-name output \
+      --status-name status \
+      --rtmp-backend null \
+      --data-dir {{directory.stream_config}} \
+      -o tf_opencv_model_path={{directory.face_detection_tf_opencv}} \
+      -o openvino_model_path={{directory.face_detection_openvino}} \
+      -o ssd_model_path={{directory.ssd_model}} \
+      -o background_model_path={{directory.bg_model}} \
+      --cloud_config {{config.ktoken}}@{{config.stream}}
+    `}}
+  models:
+  - name: "face-detection-openvino"
+    src:
+      type: "kibernetika-model"
+      workspace: "expo-recall"
+      version: "0.0.1"
+      name: "face-detection-adas-0001"
+      auth_type: "ktoken"
+  - name: "face-detection-tf-opencv"
+    src:
+      type: "kibernetika-model"
+      workspace: "expo-recall"
+      version: "1.0.1"
+      name: "tf-opencv-face-detector"
+      auth_type: "ktoken"
+  - name: "beauty-face"
+    src:
+      type: "kibernetika-model"
+      workspace: "expo-recall"
+      version: "1.0.55496-small-7-256"
+      name: "beauty-face"
+      auth_type: "ktoken"
+  - name: "beauty-face-rt"
+    src:
+      type: "kibernetika-model"
+      workspace: "expo-recall"
+      version: "1.0.55496-fp16-small-7-256"
+      name: "beauty-face"
+      auth_type: "ktoken"
+  - name: "ssd-model"
+    src:
+      type: "kibernetika-model"
+      workspace: "expo-recall"
+      version: "1.0.0-2018.05.09"
+      name: "ssdlite_mobilenet_v2_coco"
+      auth_type: "ktoken"
+  - name: "bg-model"
+    src:
+      type: "kibernetika-model"
+      workspace: "expo-recall"
+      version: "1.0.0-base"
+      name: "person-background"
+      auth_type: "ktoken"

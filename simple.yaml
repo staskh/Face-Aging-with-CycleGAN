@@ -1,0 +1,93 @@
+- label: Streams
+  type: group
+  elements:
+    - name: stream
+      label: Stream Config
+      type: stream
+      value:
+        key: live
+        input: camera
+        output: display_global
+        description: none
+        params:
+          camera: "0"
+          cloud_status: "10"
+          codec: "mjpg"
+          file_fragment_num: "10"
+          file_fragment_time: "30"
+          height: "2160"
+          output_fps: "25"
+          width: "3840"
+          zoom: "100"
+      width: 50
+- label: Configuration
+  type: group
+  elements:
+    - name: alpha
+      label: Alpha
+      type: int
+      value: 255
+      width: 33
+    - name: background
+      label: New Background
+      type: string
+      value: none
+      width: 33
+    - name: color_correction
+      label: Apply color coorection?
+      type: boolean
+      value: true
+      width: 33
+    - name: face_detection_tensor_rt
+      label: Use tesort RT?
+      type: boolean
+      value: false
+      width: 33
+    - name: face_detection_type
+      label: Face detection Type?
+      type: list
+      value:
+        - "tf-opencv"
+        - "openvino"
+      width: 33
+      listType: string
+    - name: output_view
+      label: Output view
+      type: list
+      value:
+        - "horizontal"
+        - "single"
+        - "vertical"
+        - "fh"
+      width: 33
+      listType: string
+    - name: overlay
+      label: Overlay
+      type: list
+      value:
+        - "none"
+        - "100pure/v1"
+        - "100pure/v2"
+        - "100pure/v3"
+        - "100pure/v4"
+      width: 33
+      listType: string
+    - name: style_size
+      label: Style Size
+      type: list
+      value:
+        - 512
+        - 256
+        - 320
+        - 128
+      listType: int
+      width: 33
+    - name: transfer_mode
+      label: Transfer Mode
+      type: list
+      value:
+        - "direct"
+        - "box_margin"
+        - "full"
+      listType: string
+      width: 33

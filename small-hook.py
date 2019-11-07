@@ -11,6 +11,16 @@ import os
 LOG = logging.getLogger(__name__)
 
 
+def intersec_area(b1, b2):
+    x1 = max(b1[0], b2[0])
+    x2 = min(b1[2], b2[2])
+    y1 = max(b1[1], b2[1])
+    y2 = min(b1[3], b2[3])
+    if (x2 - x1) > 0 and (y2 - y1) > 0:
+        return (x2 - x1) * (y2 - y1) / ((b1[2] - b1[0]) * (b1[3] - b1[1]))
+    return 0
+
+
 class TFOpenCVFaces:
     def __init__(self, model_path, use_tensor_rt=False):
         self._model_path = model_path
@@ -123,7 +133,7 @@ class BGAug:
         if self.back_ground is None:
             self.back_ground = cv2.imread(self.back_ground_file)[:, :, ::-1]
             self.back_ground = cv2.resize(self.back_ground, (width, height))
-        outputs = self.ssd.predict({self.ssd_input_name: np.expand_dims(cv2.resize(frame,(320,320)), axis=0)})
+        outputs = self.ssd.predict({self.ssd_input_name: np.expand_dims(cv2.resize(frame, (320, 320)), axis=0)})
         clazz = outputs['detection_classes'][0]
         scores = outputs['detection_scores'][0]
         boxes = outputs['detection_boxes'][0]
@@ -135,8 +145,8 @@ class BGAug:
         max_area = 0
         for b in boxes:
             a = (b[3] - b[1]) * (b[2] - b[0])
-            if a>max_area:
-                box = (b[0]*height,b[1]*width,b[2]*height,b[3]*width)
+            if a > max_area:
+                box = (b[0] * height, b[1] * width, b[2] * height, b[3] * width)
                 max_area = a
         total_mask = np.zeros((height, width), np.float32)
         if box is not None:
@@ -179,7 +189,7 @@ class Pipe:
             self.face_detector = TFOpenCVFaces(self._tf_opencv_model_path, use_tensor_rt=face_detection_tensor_rt)
         else:
             self.face_detector = OpenVinoFaces(self._open_vino_model_path)
-        self._output_view = params.get('output_view', 'split_horizontal')
+        self._output_view = params.get('output_view', 'horizontal')
         self._transfer_mode = params.get('transfer_mode', 'box_margin')
         self._color_correction = srt_2_bool(params.get('color_correction', 'True'))
         self._style_driver = ctx.drivers[0]
@@ -197,7 +207,10 @@ class Pipe:
             {self._style_input_name: np.zeros((1, self._style_size, self._style_size, 3), np.float32)})
 
         background_img = params.get('background', '')
+        self._overlay_img = params.get('overlay', '')
+        self._overlay = None
         self._background = None
+        self.prev_box = None
         if background_img is not None and len(background_img) > 0 and background_img != 'none':
             self._background = BGAug(params.get('ssd_model_path', ''), params.get('background_model_path', ''),
                                      background_img)
@@ -216,6 +229,88 @@ class Pipe:
             value = value.decode()
 
         return value
+
+    def add_overlay(self, img):
+        if self._overlay_img == '':
+            return img
+        if self._overlay is None:
+            try:
+                overlay = cv2.imread('{}-{}x{}.png'.format(self._overlay_img, img.shape[1], img.shape[0]),
+                                     cv2.IMREAD_UNCHANGED)
+                if overlay is None:
+                    self._overlay = ()
+                else:
+                    self._overlay = (overlay[:, :, 0:3][:, :, ::-1], overlay[:, :, 3])
+            except:
+                self._overlay = ()
+        if len(self._overlay) < 1:
+            return img
+        return cv2.copyTo(self._overlay[0], self._overlay[1], img)
+
+    def process_test(self, inputs, ctx):
+        out_size = (1920 // 2, 1080)
+        original, is_video = helpers.load_image(inputs, 'input')
+        output_view = self.get_param(inputs, 'output_view', self._output_view)
+        boxes = self.face_detector.bboxes(original)
+        boxes.sort(key=lambda box: abs((box[3] - box[1]) * (box[2] - box[0])), reverse=True)
+
+        box = None
+        if len(boxes) > 0:
+            box = boxes[0].astype(int)
+            if box[3] - box[1] < 1 or box[2] - box[0] < 1:
+                box = None
+        if box is not None:
+            x0 = max(0, box[0] - 100)
+            x1 = min(original.shape[1], box[2] + 100)
+            y0 = max(0, box[1] - 100)
+            y1 = min(original.shape[0], box[3] + 100)
+            # if self.prev_box is None:
+            #    self.prev_box = (x0, y0, x1, y1)
+            # else:
+            #    if intersec_area((x0, y0, x1, y1), self.prev_box) > 0.7:
+            #        x0, y0, x1, y1, = self.prev_box
+            #    else:
+            #        self.prev_box = (x0, y0, x1, y1)
+            kx = out_size[0] / (x1 - x0)
+            ky = out_size[1] / (y1 - y0)
+            if ky > kx:
+                k = ky
+            else:
+                k = kx
+            dest = (int((x1 - x0) * k), int((y1 - y0) * k))
+            original = original[y0:y1, x0:x1, :]
+            original = cv2.resize(original, dest, interpolation=cv2.INTER_CUBIC)
+            if original.shape[0] > out_size[1]:
+                dy = (original.shape[0] - out_size[1]) // 2
+                original = original[dy:original.shape[0] - dy, :, :]
+            elif original.shape[1] > out_size[0]:
+                dx = (original.shape[1] - out_size[0]) // 2
+                original = original[:, dx:original.shape[1] - dx, :]
+            image = original
+        else:
+            if output_view == 'horizontal' or output_view == 'h':
+                x0 = int(original.shape[1] / 4)
+                x1 = int(original.shape[1] / 2) + x0
+                original = original[:, x0:x1, :]
+                original = cv2.resize(original, out_size)
+                image = original
+        # merge
+        result = {}
+        if output_view == 'horizontal' or output_view == 'h' or output_view == 'fh':
+            image = np.hstack((original, image))
+        elif output_view == 'vertical' or output_view == 'v':
+            image = np.vstack((original, image))
+        if not is_video:
+            image = image[:, :, ::-1]
+            image_bytes = cv2.imencode('.jpg', image)[1].tostring()
+        else:
+            image_bytes = image
+            h = 480
+            w = int(480 * image.shape[1] / image.shape[0])
+            result['status'] = cv2.resize(image, (w, h))
+
+        result['output'] = image_bytes
+        return result
 
     def process(self, inputs, ctx):
         alpha = int(self.get_param(inputs, 'alpha', self._alpha))
@@ -280,6 +375,7 @@ class Pipe:
             image = np.hstack((original, image))
         elif output_view == 'vertical' or output_view == 'v':
             image = np.vstack((original, image))
+        image = self.add_overlay(image)
         if not is_video:
             image = image[:, :, ::-1]
             image_bytes = cv2.imencode('.jpg', image)[1].tostring()
