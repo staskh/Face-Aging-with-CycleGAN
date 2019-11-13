@@ -181,6 +181,7 @@ class Pipe:
         self._open_vino_model_path = params.get('openvino_model_path', None)
         self._tf_opencv_model_path = params.get('tf_opencv_model_path', None)
         self._style_size = int(params.get('style_size', 256))
+        self._zoom = int(params.get('zoom', 100))
         self._face_detection_type = params.get('face_detection_type', None)
         if face_detector is not None:
             self.face_detector = face_detector
@@ -312,7 +313,15 @@ class Pipe:
         result['output'] = image_bytes
         return result
 
-    def process(self, inputs, ctx):
+    def process(self, inputs, ctx, **kwargs):
+        if self._zoom > 0:
+            cam = kwargs.get('metadata', {}).get('camera_vc', None)
+            if cam is not None:
+                LOG.info(
+                    f'Set camera CAP_PROP_ZOOM: '
+                    f'{self._zoom} {cam.set(cv2.CAP_PROP_ZOOM, self._zoom)}'
+                )
+            self._zoom = -1
         alpha = int(self.get_param(inputs, 'alpha', self._alpha))
         style_size = self._style_size
         original, is_video = helpers.load_image(inputs, 'input')
@@ -406,8 +415,8 @@ def update_hook(ctx, **kwargs):
     return Pipe(ctx, prev_detector, **kwargs)
 
 
-def process(inputs, ctx):
-    return ctx.global_ctx.process(inputs, ctx)
+def process(inputs, ctx,**kwargs):
+    return ctx.global_ctx.process(inputs, ctx,**kwargs)
 
 
 def scale(img, high=255, low=0, cmin=None, cmax=None):
