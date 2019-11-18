@@ -174,8 +174,65 @@ class BGAug:
         return frame.astype(np.uint8)
 
 
+class MakeUpModel:
+    def __init__(self, ctx, style_size, make_up_src, model_path):
+        self._style_size = style_size
+        drv = driver.load_driver('tensorflow')
+        self.serving = drv()
+        self.serving.load_model(os.path.join(model_path, 'dmt.pb'), inputs='X:0,Y:0',
+                                outputs='decoder_1/g:0')
+        self.makeup = cv2.imread(make_up_src + '.png')[:, :, ::-1]
+        self.makeup = scale_to_inference_image(self.makeup, style_size)
+        self.makeup = np.expand_dims(self.preprocess(self.makeup), axis=0)
+        self.serving.predict({'X:0': np.zeros((1, self._style_size, self._style_size, 3)), 'Y:0': self.makeup})
+
+    def preprocess(self, img):
+        return (img / 255. - 0.5) * 2
+
+    def deprocess(self, img):
+        return (img + 1) / 2
+
+    def process(self, ctx, img, box):
+        w = int((box[2] - box[0]) / 4)
+        h = int((box[3] - box[1]) / 4)
+        box[0] = max(box[0] - w, 0)
+        box[2] = min(box[2] + w, img.shape[1])
+        box[1] = max(box[1] - h, 0)
+        box[3] = min(box[3] + h, img.shape[0])
+        img = img[box[1]:box[3], box[0]:box[2], :]
+        i_img = scale_to_inference_image(img, self._style_size)
+        outputs = self.serving.predict(
+            {'X:0': np.expand_dims(self.preprocess(i_img), axis=0), 'Y:0': self.makeup})
+        output = list(outputs.values())[0].squeeze()
+        output = self.deprocess(output)
+        output = scale(output)
+        return i_img, output, box
+
+
+class YoungModel:
+    def __init__(self, ctx, style_size, model_path):
+        drv = driver.load_driver('tensorflow')
+        self._style_driver = drv()
+        self._style_driver.load_model(model_path)
+        self._style_size = style_size
+        self._style_input_name = list(self._style_driver.inputs.keys())[0]
+        self._style_driver.predict(
+            {self._style_input_name: np.zeros((1, self._style_size, self._style_size, 3), np.float32)})
+
+    def process(self, ctx, img, box):
+        img = img[box[1]:box[3], box[0]:box[2], :]
+        i_img = scale_to_inference_image(img, self._style_size)
+        outputs = self._style_driver.predict(
+            {self._style_input_name: np.expand_dims(norm_to_inference(i_img), axis=0)})
+        output = list(outputs.values())[0].squeeze()
+        output = inverse_transform(output)
+        output = scale(output)
+        return i_img, output, box
+
+
 class Pipe:
-    def __init__(self, ctx, face_detector, **params):
+    def __init__(self, ctx, models, **params):
+        self._mirror = srt_2_bool(params.get('mirror', False))
         self._alpha = int(params.get('alpha', 255))
         self._draw_box = srt_2_bool(params.get('draw_box', False))
         self._open_vino_model_path = params.get('openvino_model_path', None)
@@ -183,18 +240,24 @@ class Pipe:
         self._style_size = int(params.get('style_size', 256))
         self._zoom = int(params.get('zoom', 100))
         self._face_detection_type = params.get('face_detection_type', None)
-        if face_detector is not None:
-            self.face_detector = face_detector
-        elif self._face_detection_type == 'tf-opencv':
-            face_detection_tensor_rt = srt_2_bool(params.get('face_detection_tensor_rt', False))
-            self.face_detector = TFOpenCVFaces(self._tf_opencv_model_path, use_tensor_rt=face_detection_tensor_rt)
-        else:
-            self.face_detector = OpenVinoFaces(self._open_vino_model_path)
+        self.face_detector = models.get('face_detector')
+        if self.face_detector is None:
+            if self._face_detection_type == 'tf-opencv':
+                face_detection_tensor_rt = srt_2_bool(params.get('face_detection_tensor_rt', False))
+                self.face_detector = TFOpenCVFaces(self._tf_opencv_model_path, use_tensor_rt=face_detection_tensor_rt)
+            else:
+                self.face_detector = OpenVinoFaces(self._open_vino_model_path)
         self._output_view = params.get('output_view', 'horizontal')
         self._transfer_mode = params.get('transfer_mode', 'box_margin')
         self._color_correction = srt_2_bool(params.get('color_correction', 'True'))
-        self._style_driver = ctx.drivers[0]
-        self._style_input_name = list(self._style_driver.inputs.keys())[0]
+        self.style_model = models.get('style_model')
+        if self.style_model is None:
+            if srt_2_bool(params.get('apply_young', True)):
+                self.style_model = YoungModel(ctx, self._style_size, params.get('beauty_model_path', None))
+            if srt_2_bool(params.get('apply_makeup', True)):
+                makeup_model_path = params.get('makeup_model_path', None)
+                make_up = params.get('makeup_src', None)
+                self.style_model = MakeUpModel(ctx, self._style_size, make_up, makeup_model_path)
         self._mask_orig = np.zeros((self._style_size, self._style_size, 3), np.float32)
         for x in range(self._style_size):
             for y in range(self._style_size):
@@ -204,8 +267,6 @@ class Pipe:
                 if r > (self._style_size / 2 - 5):
                     self._mask_orig[y, x, :] = min((r - self._style_size / 2 + 5) / 5, 1)
         self._mask_face = 1 - self._mask_orig
-        self._style_driver.predict(
-            {self._style_input_name: np.zeros((1, self._style_size, self._style_size, 3), np.float32)})
 
         background_img = params.get('background', '')
         self._overlay_img = params.get('overlay', '')
@@ -241,77 +302,17 @@ class Pipe:
                 if overlay is None:
                     self._overlay = ()
                 else:
-                    self._overlay = (overlay[:, :, 0:3][:, :, ::-1], overlay[:, :, 3])
+                    mask = overlay[:, :, 3:].astype(np.float32)
+                    mask = mask / mask.max()
+                    overlay = overlay[:, :, 0:3][:, :, ::-1].astype(np.float32) * mask
+                    self._overlay = (overlay, 1 - mask)
             except:
                 self._overlay = ()
         if len(self._overlay) < 1:
             return img
-        return cv2.copyTo(self._overlay[0], self._overlay[1], img)
-
-    def process_test(self, inputs, ctx):
-        out_size = (1920 // 2, 1080)
-        original, is_video = helpers.load_image(inputs, 'input')
-        output_view = self.get_param(inputs, 'output_view', self._output_view)
-        boxes = self.face_detector.bboxes(original)
-        boxes.sort(key=lambda box: abs((box[3] - box[1]) * (box[2] - box[0])), reverse=True)
-
-        box = None
-        if len(boxes) > 0:
-            box = boxes[0].astype(int)
-            if box[3] - box[1] < 1 or box[2] - box[0] < 1:
-                box = None
-        if box is not None:
-            x0 = max(0, box[0] - 100)
-            x1 = min(original.shape[1], box[2] + 100)
-            y0 = max(0, box[1] - 100)
-            y1 = min(original.shape[0], box[3] + 100)
-            # if self.prev_box is None:
-            #    self.prev_box = (x0, y0, x1, y1)
-            # else:
-            #    if intersec_area((x0, y0, x1, y1), self.prev_box) > 0.7:
-            #        x0, y0, x1, y1, = self.prev_box
-            #    else:
-            #        self.prev_box = (x0, y0, x1, y1)
-            kx = out_size[0] / (x1 - x0)
-            ky = out_size[1] / (y1 - y0)
-            if ky > kx:
-                k = ky
-            else:
-                k = kx
-            dest = (int((x1 - x0) * k), int((y1 - y0) * k))
-            original = original[y0:y1, x0:x1, :]
-            original = cv2.resize(original, dest, interpolation=cv2.INTER_CUBIC)
-            if original.shape[0] > out_size[1]:
-                dy = (original.shape[0] - out_size[1]) // 2
-                original = original[dy:original.shape[0] - dy, :, :]
-            elif original.shape[1] > out_size[0]:
-                dx = (original.shape[1] - out_size[0]) // 2
-                original = original[:, dx:original.shape[1] - dx, :]
-            image = original
-        else:
-            if output_view == 'horizontal' or output_view == 'h':
-                x0 = int(original.shape[1] / 4)
-                x1 = int(original.shape[1] / 2) + x0
-                original = original[:, x0:x1, :]
-                original = cv2.resize(original, out_size)
-                image = original
-        # merge
-        result = {}
-        if output_view == 'horizontal' or output_view == 'h' or output_view == 'fh':
-            image = np.hstack((original, image))
-        elif output_view == 'vertical' or output_view == 'v':
-            image = np.vstack((original, image))
-        if not is_video:
-            image = image[:, :, ::-1]
-            image_bytes = cv2.imencode('.jpg', image)[1].tostring()
-        else:
-            image_bytes = image
-            h = 480
-            w = int(480 * image.shape[1] / image.shape[0])
-            result['status'] = cv2.resize(image, (w, h))
-
-        result['output'] = image_bytes
-        return result
+        img = img.astype(np.float32)
+        img = img * self._overlay[1] + self._overlay[0]
+        return img.astype(np.uint8)
 
     def process(self, inputs, ctx, **kwargs):
         if self._zoom > 0:
@@ -323,13 +324,16 @@ class Pipe:
                 )
             self._zoom = -1
         alpha = int(self.get_param(inputs, 'alpha', self._alpha))
-        style_size = self._style_size
         original, is_video = helpers.load_image(inputs, 'input')
         output_view = self.get_param(inputs, 'output_view', self._output_view)
         if output_view == 'horizontal' or output_view == 'h':
             x0 = int(original.shape[1] / 4)
             x1 = int(original.shape[1] / 2) + x0
             original = original[:, x0:x1, :]
+        if output_view == 'vertical' or output_view == 'v':
+            y0 = int(original.shape[0] / 4)
+            y1 = int(original.shape[0] / 2) + y0
+            original = original[y0:y1, :, :]
         boxes = self.face_detector.bboxes(original)
         boxes.sort(key=lambda box: abs((box[3] - box[1]) * (box[2] - box[0])), reverse=True)
 
@@ -339,14 +343,8 @@ class Pipe:
             if box[3] - box[1] < 1 or box[2] - box[0] < 1:
                 box = None
         image = original.copy()
-        if box is not None:
-            img = image[box[1]:box[3], box[0]:box[2], :]
-            inference_img = scale_to_inference_image(img, style_size)
-            outputs = self._style_driver.predict(
-                {self._style_input_name: np.expand_dims(norm_to_inference(inference_img), axis=0)})
-            output = list(outputs.values())[0].squeeze()
-            output = inverse_transform(output)
-            output = scale(output)
+        if box is not None and self.style_model is not None:
+            inference_img, output, box = self.style_model.process(ctx, image, box)
             alpha = np.clip(alpha, 1, 255)
             if srt_2_bool(self.get_param(inputs, 'color_correction', self._color_correction)):
                 output = color_tranfer(output, inference_img)
@@ -380,10 +378,11 @@ class Pipe:
 
         output_view = self.get_param(inputs, 'output_view', self._output_view)
         result = {}
+        image = self.maybe_mirror(image)
         if output_view == 'horizontal' or output_view == 'h' or output_view == 'fh':
-            image = np.hstack((original, image))
+            image = np.hstack((self.maybe_mirror(original), image))
         elif output_view == 'vertical' or output_view == 'v':
-            image = np.vstack((original, image))
+            image = np.vstack((self.maybe_mirror(original), image))
         image = self.add_overlay(image)
         if not is_video:
             image = image[:, :, ::-1]
@@ -397,26 +396,34 @@ class Pipe:
         result['output'] = image_bytes
         return result
 
+    def maybe_mirror(self, img):
+        if self._mirror:
+            return img[:, ::-1, :]
+        else:
+            return img
+
     def stop(self, ctx):
         self.face_detector.stop(ctx)
 
 
 def init_hook(ctx, **params):
     LOG.info('Init params:')
-    return Pipe(ctx, None, **params)
+    return Pipe(ctx, {}, **params)
 
 
 def update_hook(ctx, **kwargs):
     prev_detector = None
+    style_model = None
     if ctx.global_ctx is not None:
         LOG.info('close existing pipe')
         # ctx.global_ctx.stop(ctx)
         prev_detector = ctx.global_ctx.face_detector
-    return Pipe(ctx, prev_detector, **kwargs)
+        style_model = ctx.global_ctx.style_model
+    return Pipe(ctx, {'face_detector': prev_detector, 'style_model': style_model}, **kwargs)
 
 
-def process(inputs, ctx,**kwargs):
-    return ctx.global_ctx.process(inputs, ctx,**kwargs)
+def process(inputs, ctx, **kwargs):
+    return ctx.global_ctx.process(inputs, ctx, **kwargs)
 
 
 def scale(img, high=255, low=0, cmin=None, cmax=None):

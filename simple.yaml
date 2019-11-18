@@ -1,24 +1,24 @@
 - label: Streams
   type: group
   elements:
-    - name: stream
+    - name: streams
       label: Stream Config
-      type: stream
+      type: streams
       value:
-        key: live
-        input: camera
-        output: display_global
-        description: none
-        params:
-          camera: "0"
-          cloud_status: "10"
-          codec: "mjpg"
-          file_fragment_num: "10"
-          file_fragment_time: "30"
-          height: "2160"
-          output_fps: "25"
-          width: "3840"
-          zoom: "100"
+        - key: live
+          input: camera
+          output: display_global
+          description: none
+          params:
+            camera: '0'
+            cloud_status: '10'
+            codec: mjpg
+            file_fragment_num: '10'
+            file_fragment_time: '30'
+            height: '1080'
+            output_fps: '25'
+            width: '1920'
+            zoom: '100'
       width: 50
 - label: Configuration
   type: group
@@ -27,6 +27,21 @@
       label: Alpha
       type: int
       value: 255
+      width: 33
+    - name: apply_makeup
+      label: Apply makeup?
+      type: boolean
+      value: false
+      width: 33
+    - name: apply_young
+      label: Apply young?
+      type: boolean
+      value: true
+      width: 33
+    - name: zoom
+      label: Zoom
+      type: int
+      value: 100
       width: 33
     - name: background
       label: New Background
@@ -47,47 +62,69 @@
       label: Face detection Type?
       type: list
       value:
-        - "tf-opencv"
-        - "openvino"
+        - tf-opencv
+        - openvino
       width: 33
       listType: string
     - name: output_view
       label: Output view
       type: list
       value:
-        - "horizontal"
-        - "single"
-        - "vertical"
-        - "fh"
+        - horizontal
+        - single
+        - vertical
+        - fh
       width: 33
       listType: string
     - name: overlay
       label: Overlay
       type: list
       value:
-        - "none"
-        - "100pure/v1"
-        - "100pure/v2"
-        - "100pure/v3"
-        - "100pure/v4"
+        - none
+        - 100pure/v1
+        - 100pure/v2
+        - 100pure/v3
+        - 100pure/v4
+        - 100pure/split_variant_1
+        - 100pure/split_variant_2
+      width: 33
+      listType: string
+    - name: makeup_src
+      label: MakeUp Style
+      type: list
+      value:
+        - makeup/v1
+        - makeup/v2
+        - makeup/v3
+        - makeup/v4
+        - makeup/v5
+        - makeup/v6
+        - makeup/v7
+        - makeup/v8
+        - makeup/v9
       width: 33
       listType: string
     - name: style_size
       label: Style Size
       type: list
       value:
-        - 512
         - 256
+        - 512
         - 320
         - 128
-      listType: int
       width: 33
+      listType: int
     - name: transfer_mode
       label: Transfer Mode
       type: list
       value:
-        - "direct"
-        - "box_margin"
-        - "full"
+        - direct
+        - box_margin
+        - full
+      width: 33
       listType: string
+    - name: mirror
+      label: Mirror Mode
+      type: boolean
+      value: false
       width: 33
