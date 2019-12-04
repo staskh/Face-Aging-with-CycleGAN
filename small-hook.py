@@ -232,6 +232,7 @@ class YoungModel:
 
 class Pipe:
     def __init__(self, ctx, models, **params):
+        self._portret = srt_2_bool(params.get('_portret', False))
         self._mirror = srt_2_bool(params.get('mirror', False))
         self._alpha = int(params.get('alpha', 255))
         self._draw_box = srt_2_bool(params.get('draw_box', False))
@@ -325,6 +326,8 @@ class Pipe:
             self._zoom = -1
         alpha = int(self.get_param(inputs, 'alpha', self._alpha))
         original, is_video = helpers.load_image(inputs, 'input')
+        if self._portret:
+            original = np.transpose(original,(1,0,2))
         output_view = self.get_param(inputs, 'output_view', self._output_view)
         if output_view == 'horizontal' or output_view == 'h':
             x0 = int(original.shape[1] / 4)
