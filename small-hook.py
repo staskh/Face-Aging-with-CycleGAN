@@ -232,7 +232,14 @@ class YoungModel:
 
 class Pipe:
     def __init__(self, ctx, models, **params):
-        self._portret = srt_2_bool(params.get('_portret', False))
+        self._qr_code = srt_2_bool(params.get('qr_code', False))
+        if self._qr_code:
+            self.qrDecoder = models.get('qr_code', None)
+            if self.qrDecoder is  None:
+                self.qrDecoder = cv2.QRCodeDetector()
+        else:
+            self.qrDecoder = None
+        self._portret = srt_2_bool(params.get('portret', False))
         self._mirror = srt_2_bool(params.get('mirror', False))
         self._alpha = int(params.get('alpha', 255))
         self._draw_box = srt_2_bool(params.get('draw_box', False))
@@ -346,6 +353,11 @@ class Pipe:
             if box[3] - box[1] < 1 or box[2] - box[0] < 1:
                 box = None
         image = original.copy()
+        if self._qr_code and box is None:
+            data, bbox, rectifiedImage = self.qrDecoder.detectAndDecode(original)
+            if len(data)>0:
+                logging.info('Detected: {}'.format(data))
+
         if box is not None and self.style_model is not None:
             inference_img, output, box = self.style_model.process(ctx, image, box)
             alpha = np.clip(alpha, 1, 255)
@@ -417,12 +429,14 @@ def init_hook(ctx, **params):
 def update_hook(ctx, **kwargs):
     prev_detector = None
     style_model = None
+    qr_code = None
     if ctx.global_ctx is not None:
         LOG.info('close existing pipe')
         # ctx.global_ctx.stop(ctx)
         prev_detector = ctx.global_ctx.face_detector
         style_model = ctx.global_ctx.style_model
-    return Pipe(ctx, {'face_detector': prev_detector, 'style_model': style_model}, **kwargs)
+        qr_code = ctx.global_ctx.qrDecoder
+    return Pipe(ctx, {'face_detector': prev_detector, 'style_model': style_model,'qr_code':qr_code}, **kwargs)
 
 
 def process(inputs, ctx, **kwargs):

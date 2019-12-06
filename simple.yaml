@@ -87,6 +87,7 @@
         - 100pure/v4
         - 100pure/split_variant_1
         - 100pure/split_variant_2
+        - predire/split_v1
       width: 33
       listType: string
     - name: makeup_src
