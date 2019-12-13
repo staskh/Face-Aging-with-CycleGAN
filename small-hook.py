@@ -7,6 +7,9 @@ import cv2
 from ml_serving.utils import helpers
 import numpy as np
 import os
+import threading
+import requests
+from pyzbar.pyzbar import decode as qr_decode
 
 LOG = logging.getLogger(__name__)
 
@@ -233,12 +236,7 @@ class YoungModel:
 class Pipe:
     def __init__(self, ctx, models, **params):
         self._qr_code = srt_2_bool(params.get('qr_code', False))
-        if self._qr_code:
-            self.qrDecoder = models.get('qr_code', None)
-            if self.qrDecoder is  None:
-                self.qrDecoder = cv2.QRCodeDetector()
-        else:
-            self.qrDecoder = None
+        self._configure_frame = None
         self._portret = srt_2_bool(params.get('portret', False))
         self._mirror = srt_2_bool(params.get('mirror', False))
         self._alpha = int(params.get('alpha', 255))
@@ -322,7 +320,74 @@ class Pipe:
         img = img * self._overlay[1] + self._overlay[0]
         return img.astype(np.uint8)
 
+    def message_frame(self, original_h, original_w, message):
+        frame = np.zeros((original_h, original_w, 3), np.uint8) + 255
+        frame = cv2.putText(frame, message,
+                            (100, 200),
+                            cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 0), thickness=2,
+                            lineType=cv2.LINE_AA)
+
+        return frame.copy()
+
+    def wifi_configure(self, data, original_h, original_w):
+        try:
+            time.sleep(5)
+            data = data.replace('WIFI:', '')
+            data = data.split(';')
+            logging.info('Found WIFI: {}'.format(data))
+            ssid = ''
+            pwd = ''
+            for d in data:
+                d = d.strip()
+                p = d.split(':')
+                if len(p) < 2:
+                    continue
+                if p[0].strip() == 'S':
+                    ssid = p[1].strip()
+                elif p[0].strip() == 'P':
+                    pwd = p[1].strip()
+            logging.info('WIFI: {}@{}'.format(ssid, pwd))
+            if len(ssid) > 0:
+                logging.info('Connecting WIFI: {}'.format(ssid))
+                self._configure_frame = self.message_frame(original_h, original_w,
+                                                           "Connecting to '{}'...".format(ssid))
+                time.sleep(5)
+                if len(pwd) > 0:
+                    command = 'sudo /etc/kibernetika/wifi.sh "{}" "{}"'.format(ssid, pwd)
+                else:
+                    command = 'sudo /etc/kibernetika/wifi.sh "{}"'.format(ssid)
+                logging.info('Execute {}'.format(command))
+                returned_value = os.system(command)
+                logging.info('Configure WIFI {} result {}'.format(ssid, returned_value))
+                if int(returned_value) != 0:
+                    self._configure_frame = self.message_frame(original_h, original_w,
+                                                               "Failed connect to '{}'...".format(ssid))
+                    time.sleep(15)
+                else:
+                    logging.info('Test WIFI: {}'.format(ssid))
+                    resp = requests.get('https://google.com')
+                    if resp.status_code >= 200 and resp.status_code < 400:
+                        logging.info('Connected WIFI: {}'.format(ssid))
+                        self._configure_frame = self.message_frame(original_h, original_w,
+                                                                   "Connected to '{}'...".format(ssid))
+                        time.sleep(15)
+                    else:
+                        logging.info('Failed WIFI ping: {}'.format(ssid))
+                        self._configure_frame = self.message_frame(original_h, original_w,
+                                                                   "Wifi '{}' configured. But can't connect to server.".format(
+                                                                       ssid))
+                        time.sleep(15)
+        finally:
+            self._configure_frame = None
+
     def process(self, inputs, ctx, **kwargs):
+        if self._configure_frame is not None:
+            frame = self._configure_frame
+            if frame is not None:
+                h = 480
+                w = int(480 * frame.shape[1] / frame.shape[0])
+                return {'output': frame, 'status': cv2.resize(frame, (w, h))}
+
         if self._zoom > 0:
             cam = kwargs.get('metadata', {}).get('camera_vc', None)
             if cam is not None:
@@ -334,7 +399,9 @@ class Pipe:
         alpha = int(self.get_param(inputs, 'alpha', self._alpha))
         original, is_video = helpers.load_image(inputs, 'input')
         if self._portret:
-            original = np.transpose(original,(1,0,2))
+            original = np.transpose(original, (1, 0, 2))
+        original_w = original.shape[1]
+        original_h = original.shape[0]
         output_view = self.get_param(inputs, 'output_view', self._output_view)
         if output_view == 'horizontal' or output_view == 'h':
             x0 = int(original.shape[1] / 4)
@@ -354,9 +421,23 @@ class Pipe:
                 box = None
         image = original.copy()
         if self._qr_code and box is None:
-            data, bbox, rectifiedImage = self.qrDecoder.detectAndDecode(original)
-            if len(data)>0:
-                logging.info('Detected: {}'.format(data))
+            qr_data = qr_decode(original)
+            if len(qr_data) > 0 and len(qr_data[0].data):
+                qr_data = qr_data[0]
+                data = qr_data.data.decode()
+                if len(data) > 0:
+                    # WIFI: S:tets;P: 123456;T: WPA;;
+                    logging.info('Found BarCode: {}'.format(data))
+
+                    if 'WIFI:' in data and len(data) > 6:
+                        self._configure_frame = self.message_frame(original_h, original_w,
+                                                                   "Start WIFI Configuration")
+                        config_tread = threading.Thread(
+                            target=self.wifi_configure,
+                            args=[data, original_h, original_w],
+                            daemon=True
+                        )
+                        config_tread.start()
 
         if box is not None and self.style_model is not None:
             inference_img, output, box = self.style_model.process(ctx, image, box)
@@ -429,14 +510,12 @@ def init_hook(ctx, **params):
 def update_hook(ctx, **kwargs):
     prev_detector = None
     style_model = None
-    qr_code = None
     if ctx.global_ctx is not None:
         LOG.info('close existing pipe')
         # ctx.global_ctx.stop(ctx)
         prev_detector = ctx.global_ctx.face_detector
         style_model = ctx.global_ctx.style_model
-        qr_code = ctx.global_ctx.qrDecoder
-    return Pipe(ctx, {'face_detector': prev_detector, 'style_model': style_model,'qr_code':qr_code}, **kwargs)
+    return Pipe(ctx, {'face_detector': prev_detector, 'style_model': style_model}, **kwargs)
 
 
 def process(inputs, ctx, **kwargs):
