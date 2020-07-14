@@ -1,11 +1,10 @@
 from __future__ import division
+import copy
+
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
-import math
+import cv2
 import numpy as np
-import pprint
-import scipy.misc
-import copy
 
 
 def discriminator(image, options, reuse=False, name="discriminator"):
@@ -149,12 +148,12 @@ def lrelu(x, leak=0.2, name="lrelu"):
     return tf.maximum(x, leak * x)
 
 
-_imread = scipy.misc.imread
+_imread = cv2.imread
 
 
 def load_test_data(image_path, fine_size=256):
     img = imread(image_path)
-    img = scipy.misc.imresize(img, [fine_size, fine_size])
+    img = cv2.resize(img, [fine_size, fine_size])
     img = img / 127.5 - 1
     return img
 
@@ -164,8 +163,8 @@ def load_train_data(image_path, load_size=286, fine_size=256, is_testing=False):
     img_B = imread(image_path[1])
 
     if not is_testing:
-        img_A = scipy.misc.imresize(img_A, [load_size, load_size])
-        img_B = scipy.misc.imresize(img_B, [load_size, load_size])
+        img_A = cv2.resize(img_A, [load_size, load_size])
+        img_B = cv2.resize(img_B, [load_size, load_size])
         h1 = int(np.ceil(np.random.uniform(1e-2, load_size - fine_size)))
         w1 = int(np.ceil(np.random.uniform(1e-2, load_size - fine_size)))
         img_A = img_A[h1:h1 + fine_size, w1:w1 + fine_size]
@@ -176,8 +175,8 @@ def load_train_data(image_path, load_size=286, fine_size=256, is_testing=False):
             img_B = np.fliplr(img_B)
 
     else:
-        img_A = scipy.misc.imresize(img_A, [fine_size, fine_size])
-        img_B = scipy.misc.imresize(img_B, [fine_size, fine_size])
+        img_A = cv2.resize(img_A, [fine_size, fine_size])
+        img_B = cv2.resize(img_B, [fine_size, fine_size])
 
     img_A = img_A / 127.5 - 1.
     img_B = img_B / 127.5 - 1.
@@ -197,9 +196,9 @@ def save_images(images, size, image_path):
 
 def imread(path, is_grayscale=False):
     if (is_grayscale):
-        return _imread(path, flatten=True).astype(np.float)
+        return _imread(path, cv2.IMREAD_GRAYSCALE).astype(np.float)
     else:
-        return _imread(path, mode='RGB').astype(np.float)
+        return _imread(path).astype(np.float)
 
 
 def merge_images(images, size):
@@ -218,7 +217,7 @@ def merge(images, size):
 
 
 def imsave(images, size, path):
-    return scipy.misc.imsave(path, merge(images, size))
+    return cv2.imwrite(path, merge(images, size))
 
 
 def center_crop(x, crop_h, crop_w,
@@ -228,14 +227,14 @@ def center_crop(x, crop_h, crop_w,
     h, w = x.shape[:2]
     j = int(round((h - crop_h) / 2.))
     i = int(round((w - crop_w) / 2.))
-    return scipy.misc.imresize(
+    return cv2.resize(
         x[j:j + crop_h, i:i + crop_w], [resize_h, resize_w])
 
 
 def transform(image, npx=64, is_crop=True, resize_w=64):
     # npx : # of pixels width/height of image
     if is_crop:
-        cropped_image = center_crop(image, npx, resize_w=resize_w)
+        cropped_image = center_crop(image, npx, crop_w=None, resize_w=resize_w)
     else:
         cropped_image = image
     return np.array(cropped_image) / 127.5 - 1.
