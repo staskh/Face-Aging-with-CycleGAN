@@ -54,7 +54,7 @@ class cyclegan():
         # self.phase == 'train'))
 
         self._build_model()
-        # writer = tf.train.SummaryWriter("/tmp/test_logs", sess.graph)
+        self.writer = tf.summary.FileWriter(self.checkpoint_dir, session=sess, graph=sess.graph)
         self.saver = tf.train.Saver()
         self.pool = module.ImagePool(self.max_size)
 
@@ -163,7 +163,7 @@ class cyclegan():
             np.random.shuffle(dataB)
             batch_idxs = min(min(len(dataA), len(dataB)), self.train_size) // self.batch_size
             lr = self.lr_init if epoch < self.epoch_step else self.lr_init * (self.epoch - epoch) / (
-                        self.epoch - self.epoch_step)
+                    self.epoch - self.epoch_step)
 
             for idx in range(0, batch_idxs):
                 batch_files = list(zip(dataA[idx * self.batch_size:(idx + 1) * self.batch_size],
@@ -173,26 +173,32 @@ class cyclegan():
                 batch_images = np.array(batch_images).astype(np.float32)
 
                 # Update G network and record fake outputs
-                fake_A, fake_B, _ = self.sess.run(
-                    [self.fake_A, self.fake_B, self.g_optim],
+                fake_A, fake_B, _, g_loss = self.sess.run(
+                    [self.fake_A, self.fake_B, self.g_optim, self.g_loss],
                     feed_dict={self.real_data: batch_images, self.lr_var: lr})
 
                 # self.writer.add_summary(summary_str, counter)
                 # [fake_A, fake_B] = self.pool([fake_A, fake_B])
 
                 # Update D network
-                self.sess.run([self.d_optim],
-                              feed_dict={
-                                  self.real_data: batch_images,
-                                  self.fake_A_sample: fake_A,
-                                  self.fake_B_sample: fake_B,
-                                  self.lr_var: lr
-                              })
+                _, d_loss = self.sess.run(
+                    [self.d_optim, self.d_loss],
+                    feed_dict={
+                        self.real_data: batch_images,
+                        self.fake_A_sample: fake_A,
+                        self.fake_B_sample: fake_B,
+                        self.lr_var: lr
+                    })
                 # self.writer.add_summary(summary_str, counter)
 
                 counter += 1
-                tf.logging.info(("Epoch: [%2d] [%4d/%4d] time: %4.4f" % (
-                    epoch, idx, batch_idxs, time.time() - start_time)))
+                if counter % 10 == 0:
+                    tf.logging.info(
+                        f"Epoch: [{epoch:2d}] [{idx:4d}/{batch_idxs:4d}] "
+                        f"time: {time.time() - start_time:4.4f}, d_loss={d_loss:.3f}, g_loss={g_loss:.3f}"
+                    )
+                    # tf.summary.scalar(name='g_loss', tensor=g_loss, step=counter)
+                    # tf.summary.scalar(name='d_loss', tensor=d_loss, step=counter)
 
                 if np.mod(counter, self.save_freq) == 2:
                     self.save(counter)
@@ -302,8 +308,9 @@ class cyclegan():
                 output_dir, os.path.basename(sample_file),
             )
             fake_img = self.sess.run(out_var, feed_dict={in_var: sample_image})
-            tf.logging.info("start saving")
+            tf.logging.info("Start saving")
             module.save_images(fake_img, [1, 1], image_path)
+            tf.logging.info(f'Saved to {image_path}')
 
     def export(self, model_dir):
         if not self.inited:

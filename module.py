@@ -195,10 +195,10 @@ def save_images(images, size, image_path):
 
 
 def imread(path, is_grayscale=False):
-    if (is_grayscale):
-        return _imread(path, cv2.IMREAD_GRAYSCALE).astype(np.float)
+    if is_grayscale:
+        return _imread(path, cv2.IMREAD_GRAYSCALE)
     else:
-        return _imread(path).astype(np.float)
+        return _imread(path)
 
 
 def merge_images(images, size):
@@ -217,7 +217,10 @@ def merge(images, size):
 
 
 def imsave(images, size, path):
-    return cv2.imwrite(path, merge(images, size))
+    image = merge(images, size)
+    if image.dtype in [np.float32, np.float64]:
+        image = ((image + 1) * 127.5).clip(0, 255).astype(np.uint8)
+    return cv2.imwrite(path, image)
 
 
 def center_crop(x, crop_h, crop_w,
