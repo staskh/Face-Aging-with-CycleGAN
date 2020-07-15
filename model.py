@@ -11,7 +11,7 @@ import module
 
 
 class cyclegan():
-    def __init__(self, sess, checkpoint_dir, test_dir, dataset_dir, which_direction):
+    def __init__(self, sess, checkpoint_dir, test_dir, dataset_dir, which_direction, epochs=200):
         self.sess = sess
         self.batch_size = 1  #
         self.image_size = 256  #
@@ -24,7 +24,7 @@ class cyclegan():
         self.output_nc = 3
         self.max_size = 50
         self.beta1 = 0.5  # adam
-        self.epoch = 200  # 200
+        self.epoch = epochs  # 200
         self.epoch_step = 100  # lr
         self.train_size = 1e8  #
         self.lr_init = 0.0002  # lr
@@ -359,6 +359,7 @@ def parse_args():
     parser.add_argument('--checkpoint-dir', default='./checkpoint/face_256')
     parser.add_argument('--dataset-dir', default='./datasets/face')
     parser.add_argument('--export-path')
+    parser.add_argument('--epochs', type=int, default=200)
 
     return parser.parse_args()
 
@@ -383,7 +384,7 @@ def main():
     with tf.Session(config=tfconfig) as sess:
         model = cyclegan(
             sess, checkpoint_dir=checkpoint_dir, test_dir=test_dir,
-            dataset_dir=dataset_dir, which_direction=which_direction
+            dataset_dir=dataset_dir, which_direction=which_direction, epochs=args.epochs
         )
         if phase == 'train':
             tf.logging.info("train")
