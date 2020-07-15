@@ -219,7 +219,7 @@ def merge(images, size):
 def imsave(images, size, path):
     image = merge(images, size)
     if image.dtype in [np.float32, np.float64]:
-        image = ((image + 1) * 127.5).clip(0, 255).astype(np.uint8)
+        image = scale(image)
     return cv2.imwrite(path, image)
 
 
@@ -232,6 +232,17 @@ def center_crop(x, crop_h, crop_w,
     i = int(round((w - crop_w) / 2.))
     return cv2.resize(
         x[j:j + crop_h, i:i + crop_w], (resize_h, resize_w))
+
+
+def scale(img, high=255, low=0, cmin=None, cmax=None):
+    if not cmin:
+        cmin = img.min()
+        cmax= img.max()
+
+    cscale = cmax - cmin
+    scale = float(high - low) / cscale
+    bytedata = (img - cmin) * scale + low
+    return (bytedata.clip(low, high) + 0.5).astype(np.uint8)
 
 
 def transform(image, npx=64, is_crop=True, resize_w=64):
