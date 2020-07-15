@@ -162,7 +162,7 @@ def crop_by_boxes(img, boxes):
     return crops
 
 
-def crop_by_box(img, box, margin=0):
+def crop_by_box(img, box, margin=0.):
     h = (box[3] - box[1])
     w = (box[2] - box[0])
     ymin = int(max([box[1] - h * margin, 0]))
