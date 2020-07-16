@@ -354,7 +354,7 @@ def parse_args():
     parser.add_argument(
         'phase', choices=['train', 'test', 'eval', 'export'], default='eval'
     )
-    parser.add_argument('--image')
+    parser.add_argument('--image', action='append')
     parser.add_argument('--output-dir')
     parser.add_argument('--checkpoint-dir', default='./checkpoint/face_256')
     parser.add_argument('--dataset-dir', default='./datasets/face')
@@ -399,7 +399,7 @@ def main():
         else:
             if not args.image or not args.output_dir:
                 raise RuntimeError("Provide --image and output dir for mode eval")
-            model.deage([args.image], args.output_dir)
+            model.deage(args.image, args.output_dir)
 
 
 if __name__ == '__main__':
