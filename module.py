@@ -190,8 +190,13 @@ def get_image(image_path, image_size, is_crop=True, resize_w=64, is_grayscale=Fa
     return transform(imread(image_path, is_grayscale), image_size, is_crop, resize_w)
 
 
-def save_images(images, size, image_path):
-    return imsave(inverse_transform(images), size, image_path)
+def save_images(image1, size, image_path, image2=None):
+    image = denorm(inverse_transform(image1), size)
+    if image2 is not None:
+        image2_denorm = ((image2 + 1) * 127.5).clip(0, 255).astype(np.uint8)
+        image = np.hstack((image, image2_denorm))
+
+    cv2.imwrite(image_path, image)
 
 
 def imread(path, is_grayscale=False):
@@ -216,11 +221,11 @@ def merge(images, size):
     return img
 
 
-def imsave(images, size, path):
+def denorm(images, size):
     image = merge(images, size)
     if image.dtype in [np.float32, np.float64]:
         image = scale(image)
-    return cv2.imwrite(path, image)
+    return image
 
 
 def center_crop(x, crop_h, crop_w,

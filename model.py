@@ -309,7 +309,7 @@ class cyclegan():
             )
             fake_img = self.sess.run(out_var, feed_dict={in_var: sample_image})
             tf.logging.info("Start saving")
-            module.save_images(fake_img, [1, 1], image_path)
+            module.save_images(fake_img, [1, 1], image_path, sample_image[0])
             tf.logging.info(f'Saved to {image_path}')
 
     def export(self, model_dir):
