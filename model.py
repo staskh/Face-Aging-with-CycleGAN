@@ -288,7 +288,7 @@ class cyclegan():
             tf.logging.info("start saving")
             module.save_images(fake_img, [1, 1], image_path)
 
-    def deage(self, image_files, output_dir):
+    def deage(self, image_files, output_dir, fine_size=256):
         if not self.inited:
             init_op = tf.global_variables_initializer()
             self.sess.run(init_op)
@@ -302,7 +302,7 @@ class cyclegan():
 
         for sample_file in image_files:
             tf.logging.info('Processing image: %s' % sample_file)
-            sample_image = [module.load_test_data(sample_file, self.fine_size)]
+            sample_image = [module.load_test_data(sample_file, fine_size)]
             sample_image = np.array(sample_image).astype(np.float32)
             image_path = os.path.join(
                 output_dir, os.path.basename(sample_file),
@@ -356,6 +356,7 @@ def parse_args():
     )
     parser.add_argument('--image', action='append')
     parser.add_argument('--output-dir')
+    parser.add_argument('--image-size', type=int, default=256)
     parser.add_argument('--checkpoint-dir', default='./checkpoint/face_256')
     parser.add_argument('--dataset-dir', default='./datasets/face')
     parser.add_argument('--export-path')
@@ -399,7 +400,7 @@ def main():
         else:
             if not args.image or not args.output_dir:
                 raise RuntimeError("Provide --image and output dir for mode eval")
-            model.deage(args.image, args.output_dir)
+            model.deage(args.image, args.output_dir, args.image_size)
 
 
 if __name__ == '__main__':
