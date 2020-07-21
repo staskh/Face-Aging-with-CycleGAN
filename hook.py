@@ -22,7 +22,7 @@ def init_hook(ctx, **params):
     PARAMS['alpha'] = int(PARAMS['alpha'])
     PARAMS['color_transfer'] = str2bool(PARAMS['color_transfer'])
     LOG.info('Init params:')
-    new_params = {k: v for k, v in PARAMS.items() if k not in ctx.driver.kwargs_for_hook()}
+    new_params = {k: v for k, v in PARAMS.items() if k not in ctx.kwargs_for_hook()}
     LOG.info(json.dumps(new_params, indent=2))
 
 
