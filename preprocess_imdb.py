@@ -46,7 +46,7 @@ def main():
     for i, path in enumerate(image_paths):
         if i % 100 == 0:
             print(f'Progress {i / len(image_paths) * 100:.2f} %.')
-            print(f'Processed {processed} images.')
+            print(f'Processed {processed} images, looked: {i}.')
 
         splitted = path.split('.')[-2].split('_')
         dob = splitted[-2]
