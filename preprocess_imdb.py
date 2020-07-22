@@ -2,6 +2,7 @@ import argparse
 import glob
 import math
 import os
+import sys
 
 import cv2
 from ml_serving.drivers import driver
@@ -31,13 +32,13 @@ def main():
     args = parse_args()
     min_face_size = args.min_size
     min_box_diagonal = int(math.sqrt(2 * (min_face_size ** 2)))
-    print('List files...')
+    print_fun('List files...')
     image_paths = glob.glob(os.path.join(args.data_dir, '**/*.jpg'))
-    print(f'Done list files: {len(image_paths)}')
+    print_fun(f'Done list files: {len(image_paths)}')
 
-    print('Load face detect driver...')
+    print_fun('Load face detect driver...')
     face_driver = driver.load_driver('openvino')().load_model(face_model_path)
-    print('Done loading.')
+    print_fun('Done loading.')
 
     output_b = os.path.join(args.output_dir, 'trainB')
     output_a = os.path.join(args.output_dir, 'trainA')
@@ -47,17 +48,17 @@ def main():
     processed = 0
     for i, path in enumerate(image_paths):
         if i % 100 == 0:
-            print(f'Progress {i / len(image_paths) * 100:.2f} %.')
-            print(f'Processed {processed} images, looked: {i}.')
+            print_fun(f'Progress {i / len(image_paths) * 100:.2f} %.')
+            print_fun(f'Processed {processed} images, looked: {i}.')
 
         splitted = path.split('.')[-2].split('_')
         dob = splitted[-2]
         year = int(splitted[-1])
         birth_year = int(dob.split('-')[0])
-        # print(path, dob, year)
-        # print(birth_year)
+        # print_fun(path, dob, year)
+        # print_fun(birth_year)
         age = year - birth_year
-        # print(age)
+        # print_fun(age)
         if 16 <= age <= 36:
             with open(path, 'rb') as f:
                 raw_img = f.read()
@@ -84,7 +85,12 @@ def main():
         if args.limit != 0 and processed >= args.limit:
             break
 
-    print(f'Processed {processed} images.')
+    print_fun(f'Processed {processed} images.')
+
+
+def print_fun(s):
+    print(s)
+    sys.stdout.flush()
 
 
 def box_diagonal(box):
