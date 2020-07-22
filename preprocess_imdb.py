@@ -21,7 +21,6 @@ def parse_args():
     parser.add_argument('--data-dir', required=True)
     parser.add_argument('--limit', type=int, default=0)
     parser.add_argument('--output-dir', required=True)
-    parser.add_argument('--data-dir', required=True)
 
     return parser.parse_args()
 
