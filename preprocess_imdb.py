@@ -79,8 +79,10 @@ def main():
             f.write(raw_img)
         processed += 1
 
-        if args.limit != 0 and i >= args.limit:
+        if args.limit != 0 and processed >= args.limit:
             break
+
+    print(f'Processed {processed} images.')
 
 
 def box_diagonal(box):
