@@ -75,10 +75,10 @@ def main():
         if img.shape[0] * img.shape[1] < 40000:
             continue
         boxes = hook.get_boxes(face_driver, img, threshold=args.threshold)
-        new_img = hook.crop_by_box(img, boxes[0])
         if len(boxes) != 1 or box_diagonal(boxes[0]) < min_box_diagonal:
             continue
 
+        new_img = hook.crop_by_box(img, boxes[0])
         cv2.imwrite(save_path, new_img)
         processed += 1
 
