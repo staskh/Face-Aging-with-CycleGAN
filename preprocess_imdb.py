@@ -23,7 +23,7 @@ def parse_args():
     parser.add_argument('--limit', type=int, default=0)
     parser.add_argument('--output-dir', required=True)
     parser.add_argument('--threshold', default=0.5, type=float)
-    parser.add_argument('--min-size', default=50, type=int)
+    parser.add_argument('--min-size', default=100, type=int)
 
     return parser.parse_args()
 
@@ -75,11 +75,11 @@ def main():
         if img.shape[0] * img.shape[1] < 40000:
             continue
         boxes = hook.get_boxes(face_driver, img, threshold=args.threshold)
+        new_img = hook.crop_by_box(img, boxes[0])
         if len(boxes) != 1 or box_diagonal(boxes[0]) < min_box_diagonal:
             continue
 
-        with open(save_path, 'wb') as f:
-            f.write(raw_img)
+        cv2.imwrite(save_path, new_img)
         processed += 1
 
         if args.limit != 0 and processed >= args.limit:
