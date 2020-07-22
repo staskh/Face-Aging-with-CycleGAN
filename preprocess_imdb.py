@@ -21,13 +21,15 @@ def parse_args():
     parser.add_argument('--data-dir', required=True)
     parser.add_argument('--limit', type=int, default=0)
     parser.add_argument('--output-dir', required=True)
+    parser.add_argument('--threshold', default=0.5, type=float)
+    parser.add_argument('--min-size', default=50, type=int)
 
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
-    min_face_size = 50
+    min_face_size = args.min_size
     min_box_diagonal = int(math.sqrt(2 * (min_face_size ** 2)))
     print('List files...')
     image_paths = glob.glob(os.path.join(args.data_dir, '**/*.jpg'))
@@ -71,7 +73,7 @@ def main():
 
         if img.shape[0] * img.shape[1] < 40000:
             continue
-        boxes = hook.get_boxes(face_driver, img, threshold=0.5)
+        boxes = hook.get_boxes(face_driver, img, threshold=args.threshold)
         if len(boxes) != 1 or box_diagonal(boxes[0]) < min_box_diagonal:
             continue
 
