@@ -59,12 +59,12 @@ def main():
         # print_fun(birth_year)
         age = year - birth_year
         # print_fun(age)
-        if 16 <= age <= 36:
+        if 15 <= age <= 30:
             with open(path, 'rb') as f:
                 raw_img = f.read()
             img = cv2.imdecode(np.frombuffer(raw_img, np.uint8), cv2.IMREAD_COLOR)
             save_path = os.path.join(output_a, os.path.basename(path))
-        elif 45 <= age <= 65:
+        elif 50 <= age <= 70:
             with open(path, 'rb') as f:
                 raw_img = f.read()
             img = cv2.imdecode(np.frombuffer(raw_img, np.uint8), cv2.IMREAD_COLOR)
