@@ -2,6 +2,12 @@
 	"folders": [
 		{
 			"path": "."
+		},
+		{
+			"path": "../realizemd-api"
+		},
+		{
+			"path": "../realizemd-ai"
 		}
 	]
 }
